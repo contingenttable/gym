@@ -1,0 +1,31 @@
+{
+  "name": "Member",
+  "type": "object",
+  "properties": {
+    "member_id": {
+      "type": "string",
+      "description": "Auto-generated human-friendly id e.g. GYM-000001"
+    },
+    "full_name": {
+      "type": "string"
+    },
+    "profile_photo": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional profile photo url"
+    },
+    "mobile": {
+      "type": "string"
+    },
+    "alt_mobile": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string"
+    },
+    "dob": {
+      "type": "string",
+      "format": "date"
+    },
+    "gender": {
+      "type": "string",

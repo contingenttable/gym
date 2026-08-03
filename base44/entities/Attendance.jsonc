@@ -1,0 +1,100 @@
+{
+  "name": "Attendance",
+  "type": "object",
+  "properties": {
+    "member_id": {
+      "type": "string"
+    },
+    "member_name": {
+      "type": "string",
+      "description": "Snapshot for fast list rendering"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "search",
+        "qr"
+      ],
+      "default": "search"
+    },
+    "checkout_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the member checked out (empty = still in gym)"
+    },
+    "check_out_method": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "auto"
+      ],
+      "default": "manual"
+    },
+    "correction_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "corrected"
+      ],
+      "default": "none"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "member_id",
+    "timestamp",
+    "date"
+  ],
+  "rls": {
+    "read": true,
+    "create": true,
+    "update": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "owner"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "reception"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "owner"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "reception"
+          }
+        }
+      ]
+    }
+  }
+}

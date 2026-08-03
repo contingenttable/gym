@@ -1,0 +1,119 @@
+{
+  "name": "Setting",
+  "type": "object",
+  "properties": {
+    "gym_name": {
+      "type": "string",
+      "default": "DOYEN THE GYM"
+    },
+    "logo": {
+      "type": "string",
+      "format": "uri"
+    },
+    "address": {
+      "type": "string"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string"
+    },
+    "member_id_prefix": {
+      "type": "string",
+      "default": "GYM"
+    },
+    "currency_symbol": {
+      "type": "string",
+      "default": "\u20b9"
+    },
+    "expiry_warning_days": {
+      "type": "number",
+      "default": 7
+    },
+    "attendance_duplicate_threshold": {
+      "type": "number",
+      "default": 240,
+      "description": "Minutes within which a repeat check-in is flagged as duplicate"
+    },
+    "receipt_prefix": {
+      "type": "string",
+      "default": "RCP"
+    },
+    "timezone": {
+      "type": "string",
+      "default": "Asia/Kolkata"
+    },
+    "date_format": {
+      "type": "string",
+      "default": "dd MMM yyyy"
+    },
+    "role_permissions": {
+      "type": "object",
+      "description": "Map of role -> array of permission keys (editable from Users & Roles)"
+    }
+  },
+  "required": [
+    "gym_name"
+  ],
+  "rls": {
+    "read": true,
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "owner"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "reception"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "owner"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "reception"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "owner"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "reception"
+          }
+        }
+      ]
+    }
+  }
+}

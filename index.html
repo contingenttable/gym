@@ -1,0 +1,17 @@
+const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="https://media.db.com/images/public/6a70d3dc9fc3c80dbcbf76a3/eb4b48b8e_ChatGPTImageAug4202612_58_55AM.png" />
+    <link rel="apple-touch-icon" href="https://media.db.com/images/public/6a70d3dc9fc3c80dbcbf76a3/eb4b48b8e_ChatGPTImageAug4202612_58_55AM.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>DOYEN THE GYM</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
