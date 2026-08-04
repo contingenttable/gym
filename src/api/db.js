@@ -1,10 +1,15 @@
 /**
  * db.js — Supabase compatibility shim
  *
- * Key fix: Every query is tied to an AbortController.
- * A global controller is replaced whenever the tab becomes visible again.
- * This cancels all in-flight "ghost" requests that were queued while the
- * tab was backgrounded — which was causing the app to freeze on tab return.
+ * Tab-switch fix strategy:
+ * When a tab is backgrounded, browser throttles JS + network.
+ * Queued fetch requests resolve in bulk when tab returns, causing
+ * "ghost" responses that confuse the Supabase client state.
+ *
+ * Solution: replace the global AbortController only when tab becomes
+ * visible AND we are NOT in a user-initiated fetch (checked via counter).
+ * AbortErrors from tab-switch are silently swallowed so the page keeps
+ * showing its last data rather than going blank.
  */
 
 import { supabase } from './supabaseClient';
@@ -22,23 +27,25 @@ const TABLE_MAP = {
   User:              'users',
 };
 
-// ── Global abort controller ────────────────────────────────────────────────────
-// Replaced every time the tab becomes visible, aborting any stale in-flight
-// requests from when the tab was backgrounded.
-let globalController = new AbortController();
+// ── Abort controller management ───────────────────────────────────────────────
+let currentController = new AbortController();
+let activeRequests = 0; // count of in-flight requests
 
+function getSignal() { return currentController.signal; }
+
+function abortAndReset() {
+  currentController.abort();
+  currentController = new AbortController();
+}
+
+// On tab focus: abort ghost requests only if nothing is actively running
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      // Abort all pending queries from before the tab came back
-      globalController.abort();
-      globalController = new AbortController();
+    if (document.visibilityState === 'visible' && activeRequests === 0) {
+      abortAndReset();
     }
   });
 }
-
-/** Get the current abort signal — use this in every fetch */
-const getSignal = () => globalController.signal;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -51,15 +58,11 @@ function assertOk({ error }, context = '') {
   if (error) throw Object.assign(new Error(error.message || 'Supabase error'), { context });
 }
 
-/**
- * withTimeout — race a promise against a timeout.
- * 30s first attempt, 25s on retry.
- */
 function withTimeout(promise, ms, label = '') {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Query timed out after ${ms}ms (${label})`)), ms)
+      setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms)
     ),
   ]);
 }
@@ -67,38 +70,35 @@ function withTimeout(promise, ms, label = '') {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * run — execute a Supabase query builder with abort signal + timeout + retry.
- * `buildQuery` is a function that returns a fresh Supabase query object.
- * We call it twice (for retry) to get a fresh query with the new signal.
+ * run — execute a query with abort signal, timeout, and retry on cold start.
+ * AbortErrors are rethrown so callers can decide whether to ignore them.
  */
 async function run(buildQuery, label = '') {
-  const FIRST_MS  = 30000;
-  const RETRY_MS  = 25000;
-  const RETRY_GAP = 3000;
-
-  const attempt = (ms) => {
-    // Build a fresh query with the current abort signal
-    const query = buildQuery().abortSignal(getSignal());
-    return withTimeout(query, ms, label);
-  };
-
+  activeRequests++;
   try {
-    return await attempt(FIRST_MS);
-  } catch (err) {
-    // Don't retry if the user aborted (tab switch) or it's a real data error
-    if (err.name === 'AbortError') throw err;
-    const isTimeout = err.message?.startsWith('Query timed out');
-    const isNetwork = err.message?.toLowerCase().includes('network') ||
-                      err.message?.toLowerCase().includes('fetch');
-    if (!isTimeout && !isNetwork) throw err;
+    const attempt = (ms) => withTimeout(
+      buildQuery().abortSignal(getSignal()),
+      ms, label
+    );
 
-    console.warn(`[db] Retrying "${label}" after timeout...`);
-    await sleep(RETRY_GAP);
-    return await attempt(RETRY_MS);
+    try {
+      return await attempt(30000);
+    } catch (err) {
+      if (err.name === 'AbortError') throw err; // propagate abort
+      const retryable = err.message?.startsWith('Timeout') ||
+                        err.message?.toLowerCase().includes('network') ||
+                        err.message?.toLowerCase().includes('fetch');
+      if (!retryable) throw err;
+      console.warn(`[db] Retrying ${label}...`);
+      await sleep(3000);
+      return await attempt(25000);
+    }
+  } finally {
+    activeRequests = Math.max(0, activeRequests - 1);
   }
 }
 
-// ── Entity API factory ─────────────────────────────────────────────────────────
+// ── Entity API ─────────────────────────────────────────────────────────────────
 
 function makeEntityApi(tableName) {
   return {
@@ -108,8 +108,7 @@ function makeEntityApi(tableName) {
         () => supabase.from(tableName).select('*').order(column, { ascending }).limit(limit),
         `${tableName}.list`
       );
-      assertOk({ error }, `${tableName}.list`);
-      return data ?? [];
+      assertOk({ error }); return data ?? [];
     },
 
     async filter(conditions = {}, orderStr = '-created_date', limit = 500) {
@@ -121,8 +120,7 @@ function makeEntityApi(tableName) {
         }
         return q;
       }, `${tableName}.filter`);
-      assertOk({ error }, `${tableName}.filter`);
-      return data ?? [];
+      assertOk({ error }); return data ?? [];
     },
 
     async get(id) {
@@ -130,7 +128,7 @@ function makeEntityApi(tableName) {
         () => supabase.from(tableName).select('*').eq('id', id).maybeSingle(),
         `${tableName}.get`
       );
-      assertOk({ error }, `${tableName}.get`);
+      assertOk({ error });
       if (!data) throw new Error(`${tableName} not found: ${id}`);
       return data;
     },
@@ -143,7 +141,7 @@ function makeEntityApi(tableName) {
         () => supabase.from(tableName).insert(clean).select().maybeSingle(),
         `${tableName}.create`
       );
-      assertOk({ error }, `${tableName}.create`);
+      assertOk({ error });
       if (!data) throw new Error(`${tableName} insert returned no data — check RLS`);
       return data;
     },
@@ -156,7 +154,7 @@ function makeEntityApi(tableName) {
         () => supabase.from(tableName).update(clean).eq('id', id).select().maybeSingle(),
         `${tableName}.update`
       );
-      assertOk({ error }, `${tableName}.update`);
+      assertOk({ error });
       return data ?? { id, ...clean };
     },
 
@@ -165,7 +163,7 @@ function makeEntityApi(tableName) {
         () => supabase.from(tableName).delete().eq('id', id),
         `${tableName}.delete`
       );
-      assertOk({ error }, `${tableName}.delete`);
+      assertOk({ error });
     },
   };
 }
@@ -194,8 +192,6 @@ function redirectToLogin(returnUrl) {
   window.location.href = '/login' + (returnUrl ? `?returnTo=${encodeURIComponent(returnUrl)}` : '');
 }
 
-// ── File upload ────────────────────────────────────────────────────────────────
-
 async function uploadFile({ file }) {
   const ext  = file.name.split('.').pop();
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
@@ -210,8 +206,6 @@ async function inviteUser(email, role) {
   if (error) throw new Error(error.message);
 }
 
-// ── Export ─────────────────────────────────────────────────────────────────────
-
 const entities = Object.fromEntries(
   Object.entries(TABLE_MAP).map(([name, table]) => [name, makeEntityApi(table)])
 );
@@ -222,6 +216,7 @@ export const db = {
   integrations: { Core: { UploadFile: uploadFile } },
   users: { inviteUser },
   supabase,
+  _abortAndReset: abortAndReset,
 };
 
 export default db;

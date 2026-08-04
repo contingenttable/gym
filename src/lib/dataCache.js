@@ -1,21 +1,16 @@
 /**
- * dataCache.js — Simple in-memory cache for page data.
+ * dataCache.js — In-memory page data cache with TTL.
  *
- * Why: Every page uses useEffect → useState to fetch data. When you navigate
- * away and come back (or switch tabs), React unmounts/remounts the component
- * and re-fetches everything from Supabase. This causes the spinner to show
- * every single time.
+ * TTL: 5 minutes. Pages show cached data instantly on re-mount
+ * and refresh silently in the background.
  *
- * This cache stores the last fetched data per key with a TTL. On remount,
- * pages get the cached data instantly (no spinner) and refresh silently
- * in the background.
- *
- * TTL: 2 minutes — fresh enough for a gym management app.
+ * After a long tab absence (>30s), AppLayout calls invalidateAll()
+ * so the next page mount fetches fresh data instead of stale cache.
  */
 
-const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-const store = new Map(); // key → { data, ts }
+const store = new Map();
 
 export const cache = {
   get(key) {
@@ -38,5 +33,10 @@ export const cache = {
 
   invalidateAll() {
     store.clear();
+  },
+
+  age(key) {
+    const entry = store.get(key);
+    return entry ? Date.now() - entry.ts : Infinity;
   },
 };

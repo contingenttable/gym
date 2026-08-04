@@ -52,6 +52,7 @@ export default function Dashboard() {
         cache.set(CACHE_KEY, fresh);
         setData(fresh);
       } catch (e) {
+        if (e.name === 'AbortError') return; // tab switched — keep existing data
         console.error('Dashboard load failed:', e);
       } finally {
         if (!cancelled) setLoading(false);

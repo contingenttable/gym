@@ -13,10 +13,9 @@ export default function AppLayout() {
   const [collapsed, setCollapsed]     = useState(false);
   const [revealed, setRevealed]       = useState(false);
 
-  const navigateRef     = useRef(null);
-  const reconnectingRef = useRef(false);  // prevent concurrent reconnects
-  const navigate        = useNavigate();
-  navigateRef.current   = navigate;
+  const navigateRef   = useRef(null);
+  const navigate      = useNavigate();
+  navigateRef.current = navigate;
 
   // ── Load settings once ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -25,79 +24,65 @@ export default function AppLayout() {
       .catch(() => {});
   }, []);
 
-  // ── Recovery function — called on tab focus & network reconnect ─────────────
-  // This is the core fix: after any absence (tab switch, sleep, network drop),
-  // we check if the session is still valid and if the DB is reachable.
-  // If not — we recover silently without showing a spinner.
-  const recover = useCallback(async () => {
-    if (reconnectingRef.current) return;  // already recovering
-    reconnectingRef.current = true;
+  // ── Visibility change handler ──────────────────────────────────────────────
+  useEffect(() => {
+    let lastHidden = 0;
 
-    try {
-      // 1. Check session — getSession() reads from localStorage, no network call
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHidden = Date.now();
+      }
+    };
 
-      if (sessionError || !session) {
-        // No session — send to login
-        navigateRef.current?.('/login', { replace: true });
-        return;
+    const onShow = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const hiddenMs = Date.now() - lastHidden;
+
+      // If tab was hidden for more than 30 seconds, invalidate cache so
+      // pages re-fetch fresh data when they re-render.
+      if (hiddenMs > 30000) {
+        cache.invalidateAll();
       }
 
-      // 2. Check if token needs refresh (expires within 10 minutes)
-      const expiresAt = (session.expires_at || 0) * 1000;
-      const timeLeft  = expiresAt - Date.now();
-
-      if (timeLeft < 10 * 60 * 1000) {
-        try {
-          const { error } = await supabase.auth.refreshSession();
-          if (error) {
-            // Real auth failure — go to login
-            navigateRef.current?.('/login', { replace: true });
-            return;
-          }
-        } catch {
-          // Network error — token still valid, don't redirect
+      // Check session is still valid
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          navigateRef.current?.('/login', { replace: true });
+          return;
         }
+        // Refresh token if expiring within 5 minutes
+        const expiresAt = (session.expires_at || 0) * 1000;
+        if (expiresAt - Date.now() < 5 * 60 * 1000) {
+          await supabase.auth.refreshSession().catch(() => {});
+        }
+      } catch {
+        // Network error — don't redirect
       }
+    };
 
-      // 3. Invalidate stale cache so pages re-fetch fresh data silently
-      // (data older than 2 min is already auto-expired by dataCache.js)
-      // Force-invalidate attendance since it changes most frequently
-      cache.invalidate('attendance');
+    document.addEventListener('visibilitychange', onHide);
+    document.addEventListener('visibilitychange', onShow);
+    window.addEventListener('online', onShow);
 
-    } finally {
-      reconnectingRef.current = false;
-    }
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      document.removeEventListener('visibilitychange', onShow);
+      window.removeEventListener('online', onShow);
+    };
   }, []);
 
-  // ── Visibility change — fires on tab switch ─────────────────────────────────
+  // ── 10-min heartbeat ───────────────────────────────────────────────────────
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') recover();
-    };
-
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [recover]);
-
-  // ── Online event — fires when network reconnects ────────────────────────────
-  useEffect(() => {
-    const onOnline = () => {
-      console.log('[app] Network reconnected — recovering session');
-      recover();
-    };
-
-    window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
-  }, [recover]);
-
-  // ── Periodic heartbeat — every 10 min while active ─────────────────────────
-  useEffect(() => {
-    const heartbeat = setInterval(() => {
-      if (document.visibilityState === 'visible') recover();
+    const t = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) navigateRef.current?.('/login', { replace: true });
+      } catch {}
     }, 10 * 60 * 1000);
-    return () => clearInterval(heartbeat);
-  }, [recover]);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-background">
