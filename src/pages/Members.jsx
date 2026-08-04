@@ -6,6 +6,7 @@ import MemberAvatar from '@/components/gym/MemberAvatar';
 import StatusBadge from '@/components/gym/StatusBadge';
 import EmptyState from '@/components/gym/EmptyState';
 import BulkRenewDialog from '@/components/gym/BulkRenewDialog';
+import WakingUp from '@/components/gym/WakingUp';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { deriveStatus, formatDate, can, computeBalance } from '@/lib/gym';
@@ -135,9 +136,12 @@ export default function Members() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-      </div>
+      <>
+        <WakingUp loading={loading} />
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        </div>
+      </>
     );
   }
 

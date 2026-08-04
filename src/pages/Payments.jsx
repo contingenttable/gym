@@ -12,6 +12,7 @@ import MemberAvatar from '@/components/gym/MemberAvatar';
 import EmptyState from '@/components/gym/EmptyState';
 import MemberPickerDialog from '@/components/gym/MemberPickerDialog';
 import RecordPaymentDialog from '@/components/gym/RecordPaymentDialog';
+import WakingUp from '@/components/gym/WakingUp';
 import {
   formatCurrency, formatDate, PAYMENT_MODE_LABEL, todayISO, logAudit, computeBalance, can,
 } from '@/lib/gym';
@@ -141,9 +142,12 @@ export default function Payments() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-      </div>
+      <>
+        <WakingUp loading={loading} />
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        </div>
+      </>
     );
   }
 

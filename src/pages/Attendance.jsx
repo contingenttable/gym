@@ -15,6 +15,7 @@ import EmptyState from '@/components/gym/EmptyState';
 import QrScanner from '@/components/gym/QrScanner';
 import CheckInQrPanel from '@/components/gym/CheckInQrPanel';
 import CheckInOutBurst from '@/components/gym/CheckInOutBurst';
+import WakingUp from '@/components/gym/WakingUp';
 import {
   deriveStatus, formatDate, formatDateTime, daysRemaining, todayISO, logAudit,
   isActiveCheckin, checkOutDue, autoCheckoutTime, formatDuration, sessionDuration,
@@ -259,9 +260,12 @@ export default function Attendance() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-      </div>
+      <>
+        <WakingUp loading={loading} />
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        </div>
+      </>
     );
   }
 

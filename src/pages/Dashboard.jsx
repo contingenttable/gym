@@ -18,6 +18,7 @@ import RetentionChart from '@/components/gym/RetentionChart';
 import CalendarView from '@/components/gym/CalendarView';
 import TopMembersLeaderboard from '@/components/gym/TopMembersLeaderboard';
 import UpcomingBirthdays from '@/components/gym/UpcomingBirthdays';
+import WakingUp from '@/components/gym/WakingUp';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   deriveStatus, formatCurrency, formatDate, formatDateTime, daysRemaining,
@@ -124,9 +125,12 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-      </div>
+      <>
+        <WakingUp loading={loading} />
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        </div>
+      </>
     );
   }
 
