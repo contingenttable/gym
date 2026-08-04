@@ -1,6 +1,4 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
-
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { UserCog, UserPlus, Trash2, Loader2, Save, RotateCcw, Mail, ShieldCheck, Users as UsersIcon, KeyRound } from 'lucide-react';
 
@@ -76,8 +74,19 @@ export default function UsersPage() {
   };
 
   const invite = async (email, role) => {
-    await db.users.inviteUser(email, role);
-    toast({ title: 'Invitation sent', description: `${email} invited as ${ROLES[role]}` });
+    // Note: Supabase admin.inviteUserByEmail requires a service-role key which
+    // must NOT be exposed client-side. For production, proxy this through a
+    // Supabase Edge Function. For now we use signUp so the user gets an email.
+    const { error } = await globalThis.db.supabase.auth.signUp({
+      email,
+      password: Math.random().toString(36).slice(2) + 'Aa1!', // temp password
+      options: {
+        data: { role },
+        emailRedirectTo: `${window.location.origin}/reset-password`,
+      },
+    });
+    if (error) throw new Error(error.message);
+    toast({ title: 'Invitation sent', description: `${email} invited as ${ROLES[role]}. They'll receive a confirmation email.` });
     setInviteOpen(false);
     loadUsers();
   };

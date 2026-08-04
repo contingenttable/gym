@@ -1,114 +1,83 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
-
-import React, { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Lock, Loader2, AlertTriangle } from "lucide-react";
-import AuthLayout from "@/components/AuthLayout";
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Lock, Loader2, AlertTriangle } from 'lucide-react';
+import AuthLayout from '@/components/AuthLayout';
+import supabase from '@/api/supabaseClient';
 
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  const resetToken = searchParams.get("token");
+  const [newPassword, setNewPassword]         = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError]                     = useState('');
+  const [loading, setLoading]                 = useState(false);
+  const [done, setDone]                       = useState(false);
 
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
+  // Supabase sends the user to this page with a session already set via the
+  // magic link in the email — no token param needed; we just update the password.
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
+    setError('');
     if (newPassword !== confirmPassword) {
-      setError("Passwords do not match");
+      setError('Passwords do not match');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters');
       return;
     }
     setLoading(true);
     try {
-      await db.auth.resetPassword({ resetToken, newPassword });
-      window.location.href = "/login";
+      const { error: err } = await supabase.auth.updateUser({ password: newPassword });
+      if (err) throw err;
+      setDone(true);
     } catch (err) {
-      setError(err.message || "Failed to reset password");
+      setError(err.message || 'Failed to reset password');
     } finally {
       setLoading(false);
     }
   };
 
-  if (!resetToken) {
+  if (done) {
     return (
-      <AuthLayout
-        icon={AlertTriangle}
-        title="Invalid reset link"
-        subtitle="This password reset link is missing or invalid"
-        footer={
-          <Link to="/forgot-password" className="text-primary font-medium hover:underline">
-            Request a new link
-          </Link>
-        }
-      >
-        <p className="text-sm text-foreground text-center">
-          The link you used appears to be incomplete. Please request a new password reset email.
+      <AuthLayout icon={Lock} title="Password updated" subtitle="Your password has been changed">
+        <p className="text-sm text-center text-muted-foreground mb-4">
+          You can now log in with your new password.
         </p>
+        <Link to="/login">
+          <Button className="w-full h-12">Go to log in</Button>
+        </Link>
       </AuthLayout>
     );
   }
 
   return (
-    <AuthLayout
-      icon={Lock}
-      title="New password"
-      subtitle="Enter your new password below"
-    >
+    <AuthLayout icon={Lock} title="New password" subtitle="Enter your new password below">
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-          {error}
-        </div>
+        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="password">New Password</Label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-            <Input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              autoFocus
-              placeholder="••••••••"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="pl-10 h-12"
-              required
-            />
+            <Input id="password" type="password" autoComplete="new-password" autoFocus
+              placeholder="Min. 6 characters" value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)} className="pl-10 h-12" required />
           </div>
         </div>
         <div className="space-y-2">
           <Label htmlFor="confirm">Confirm Password</Label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-            <Input
-              id="confirm"
-              type="password"
-              autoComplete="new-password"
-              placeholder="••••••••"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="pl-10 h-12"
-              required
-            />
+            <Input id="confirm" type="password" autoComplete="new-password"
+              placeholder="••••••••" value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)} className="pl-10 h-12" required />
           </div>
         </div>
         <Button type="submit" className="w-full h-12 font-medium" disabled={loading}>
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Resetting...
-            </>
-          ) : (
-            "Reset password"
-          )}
+          {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Resetting…</> : 'Reset password'}
         </Button>
       </form>
     </AuthLayout>

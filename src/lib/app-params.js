@@ -1,31 +1,9 @@
-const isNode = typeof window === 'undefined';
-const windowObj = isNode ? { localStorage: new Map() } : window;
-const storage = windowObj.localStorage;
+// app-params.js — Base44 parameter helpers (no longer used after Supabase migration)
+// Kept as a stub to avoid import errors in any remaining references.
 
-const toSnakeCase = (str) => {
-  return str.replace(/([A-Z])/g, '_$1').toLowerCase();
-}
+export const appParams = {
+  appId: import.meta.env.VITE_SUPABASE_URL || '',
+  token: null,
+};
 
-const getAppParamValue = (paramName, { defaultValue = undefined, removeFromUrl = false } = {}) => {
-  if (isNode) {
-    return defaultValue;
-  }
-  const storageKey = `base44_${toSnakeCase(paramName)}`;
-  const urlParams = new URLSearchParams(window.location.search);
-  const searchParam = urlParams.get(paramName);
-  if (removeFromUrl) {
-    urlParams.delete(paramName);
-    const newUrl = `${window.location.pathname}${urlParams.toString() ? `?${urlParams.toString()}` : ""
-      }${window.location.hash}`;
-    window.history.replaceState({}, document.title, newUrl);
-  }
-  if (searchParam) {
-    storage.setItem(storageKey, searchParam);
-    return searchParam;
-  }
-  if (defaultValue) {
-    storage.setItem(storageKey, defaultValue);
-    return defaultValue;
-  }
-  const storedValue = storage.getItem(storageKey);
-  if (storedValue) {
+export default appParams;
