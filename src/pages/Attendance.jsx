@@ -176,45 +176,64 @@ export default function Attendance() {
   // ── Check-out (optimistic) ─────────────────────────────────────────────────
   const doCheckOut = async (member) => {
     setBusy(true);
+    const now = new Date();
+
+    // ① Find the open record in local state first
+    const openRecord = attendance.find(
+      (a) => a.member_id === member.id && isActiveCheckin(a)
+    );
+
+    // ② Optimistic update — mark it checked out immediately in UI
+    if (openRecord) {
+      setAttendance((prev) => prev.map((a) =>
+        a.id === openRecord.id
+          ? { ...a, checkout_timestamp: now.toISOString(), check_out_method: 'manual' }
+          : a
+      ));
+    }
+    setPresent(null);
+
     try {
-      const now = new Date();
-
-      // ① Instant UI update — mark the open record as checked out
-      setAttendance((prev) => prev.map((a) => {
-        if (a.member_id === member.id && isActiveCheckin(a)) {
-          return { ...a, checkout_timestamp: now.toISOString(), check_out_method: 'manual' };
-        }
-        return a;
-      }));
-      setPresent(null);
-
-      // ② Write to DB
+      // ③ Write to DB
       const closed = await checkoutMember(member.id, 'manual', threshold);
+
       if (!closed) {
-        // Roll back if no session found
-        setAttendance((prev) => prev.map((a) => {
-          if (a.member_id === member.id && a.check_out_method === 'manual' && !closed) {
-            return { ...a, checkout_timestamp: null, check_out_method: null };
-          }
-          return a;
-        }));
+        // Roll back optimistic update
+        if (openRecord) {
+          setAttendance((prev) => prev.map((a) =>
+            a.id === openRecord.id
+              ? { ...a, checkout_timestamp: null, check_out_method: null }
+              : a
+          ));
+        }
         toast({ title: 'No active session', description: `${member.full_name} is not currently checked in.` });
         return;
       }
 
+      // ④ Replace optimistic record with real DB record
+      setAttendance((prev) => prev.map((a) =>
+        a.id === (openRecord?.id || closed.id) ? closed : a
+      ));
+
       const mins = sessionDuration(closed);
       setBurst({
-        mode: 'out', name: member.full_name,
+        mode: 'out',
+        name: member.full_name,
         time: formatDateTime(now.toISOString()).split(',')[1]?.trim(),
         duration: formatDuration(mins),
       });
 
-      // ③ Sync real data silently
-      setAttendance((prev) => prev.map((a) => a.member_id === closed.member_id && !a.checkout_timestamp ? closed : a));
       await logAudit({ action: 'attendance.update', entity: 'Attendance', entity_id: closed.id, reason: 'Manual check-out' });
     } catch (e) {
+      // Roll back optimistic update on error
+      if (openRecord) {
+        setAttendance((prev) => prev.map((a) =>
+          a.id === openRecord.id
+            ? { ...a, checkout_timestamp: null, check_out_method: null }
+            : a
+        ));
+      }
       toast({ title: 'Check-out failed', description: e.message, variant: 'destructive' });
-      loadAll(true); // resync on error
     } finally {
       setBusy(false);
     }

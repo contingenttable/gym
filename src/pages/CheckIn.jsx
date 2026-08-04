@@ -158,7 +158,11 @@ export default function CheckIn() {
     try {
       const now    = new Date();
       const closed = await checkoutMember(member.id, 'manual', threshold);
-      if (!closed) { setError('No active session found.'); setStage('error'); return; }
+      if (!closed) {
+        setError('Could not find an active session. You may already be checked out.');
+        setStage('error');
+        return;
+      }
       const mins = sessionDuration(closed);
       setBurst({
         mode: 'out', name: member.full_name,
