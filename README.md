@@ -1,79 +1,59 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
+# Gym Management App
 
-# Base44 Project
+A full-featured gym management system built with React + Vite, backed by Supabase, and deployed on Vercel.
 
-Use this repository to run and edit the app locally, then publish changes back through db.
+## Features
 
-Any change pushed to the repo will also be reflected in the Base44 Builder.
+- Member registration & profiles with QR cards
+- Membership plans, renewals, bulk renewals, freeze/unfreeze
+- Attendance tracking — search, QR scan, self check-in kiosk
+- Payment ledger with receipt printing
+- Analytics dashboard, reports & CSV export
+- Role-based access control (Owner / Admin / Reception)
+- Audit log for all sensitive actions
+- Dark mode
 
-## Prerequisites
+## Tech stack
 
-1. Clone the repository using the project's Git URL.
-2. Navigate to the project directory.
-3. Install dependencies: `npm install`.
-4. Install the Base44 CLI: `npm install -g base44@latest`.
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, Vite, Tailwind CSS, Radix UI, Recharts |
+| Backend / DB | Supabase (Postgres + Auth + Storage) |
+| Hosting | Vercel |
 
-See the [Base44 CLI docs](https://docs.db.com/developers/references/cli/get-started/overview) if you want to run Base44 commands directly.
+## Local development
 
-## Run Locally
+1. Clone the repo and install dependencies:
+   ```bash
+   npm install
+   ```
 
-Run the full local development environment from the project root:
+2. Create `.env.local` in the project root:
+   ```
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your_anon_key
+   ```
 
-```bash
-base44 dev
+3. Start the dev server:
+   ```bash
+   npm run dev
+   ```
+
+## Deployment
+
+See **[DEPLOY.md](./DEPLOY.md)** for the full step-by-step guide covering:
+- Supabase project setup & schema
+- GitHub repository setup
+- Vercel deployment with environment variables
+
+## Project structure
+
 ```
-
-`base44 dev` starts the local Base44 development backend and, when this app is configured for it, also starts the frontend dev server for you. Use the frontend URL printed by the command.
-
-For example, when the Base44 project config includes a `serveCommand`, `base44 dev` can launch the frontend too:
-
-```json5
-{
-  "site": {
-    "serveCommand": "npm run dev"
-  }
-}
+src/
+  api/          # Supabase client + db adapter shim
+  components/   # UI components (gym-specific + shadcn/ui)
+  lib/          # Auth context, utilities, permissions
+  pages/        # Route-level page components
+config/         # App-level entity & config definitions
+supabase/       # Database schema SQL
 ```
-
-In a Base44 project this lives in `base44/config.jsonc`.
-
-## Run Only The Frontend
-
-If you only want to work on the frontend against the hosted Base44 backend, run:
-
-```bash
-npm run dev
-```
-
-Open the local URL printed by Vite.
-
-## Use The Hosted Backend
-
-For frontend-only development, create or update `.env.local` in the project root:
-
-```bash
-VITE_BASE44_APP_ID=your_app_id
-VITE_BASE44_APP_BASE_URL=https://your-app.db.app
-```
-
-`VITE_BASE44_APP_ID` identifies the Base44 app.
-
-`VITE_BASE44_APP_BASE_URL` tells the Base44 Vite plugin where to send local `/api` requests. Point it at your deployed Base44 app URL when you want the local frontend to use the hosted backend.
-
-When you use `base44 dev`, the command injects the local Base44 values for you, so `.env.local` is mainly needed for frontend-only workflows.
-
-## Publish Your Changes
-
-After pushing your changes to git, open the Base44 dashboard and publish the app:
-
-```bash
-base44 dashboard open
-```
-
-## Docs & Support
-
-Documentation: [https://docs.db.com/Integrations/Using-GitHub](https://docs.db.com/Integrations/Using-GitHub)
-
-Base44 CLI command reference: [https://docs.db.com/developers/references/cli/commands/introduction](https://docs.db.com/developers/references/cli/commands/introduction)
-
-Support: [https://app.db.com/support](https://app.db.com/support)

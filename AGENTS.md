@@ -22,8 +22,9 @@ npx skills add base44/skills
 ## Key Files
 
 - `src/`: frontend application source.
-- `src/api/base44Client.js`: frontend Base44 SDK client.
-- `vite.config.js`: Vite config and Base44 Vite plugin setup.
+- `src/api/db.js`: Supabase db adapter (entity CRUD + auth shim).
+- `src/api/supabaseClient.js`: raw Supabase client.
+- `vite.config.js`: Vite config.
 - `.env.local`: local-only environment values; never commit secrets.
 
 ## Working Notes
