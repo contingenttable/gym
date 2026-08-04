@@ -2,6 +2,7 @@
 import { createPortal } from 'react-dom';
 import { Maximize2, Minimize2, Copy, RefreshCw, Smartphone, Users, Radio, Dumbbell } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
+import { supabase } from '@/api/supabaseClient';
 
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -13,28 +14,31 @@ import {
 } from '@/lib/gym';
 
 export default function CheckInQrPanel({ settings }) {
-  const { toast } = useToast();
+  const { toast }       = useToast();
   const [fullscreen, setFullscreen] = useState(false);
-  const [tick, setTick] = useState(0);
-  const [inGym, setInGym] = useState([]); // [{ att, member }]
-  const [burst, setBurst] = useState(null);
+  const [tick, setTick]             = useState(0);
+  const [inGym, setInGym]           = useState([]);
+  const [burst, setBurst]           = useState(null);
   const membersMapRef = useRef({});
 
-  const gymName = settings?.gym_name || 'DOYEN THE GYM';
+  const gymName    = settings?.gym_name || 'DOYEN THE GYM';
   const checkInUrl = `${window.location.origin}/check-in`;
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=10&data=${encodeURIComponent(checkInUrl)}&_=${tick}`;
+  const qrSrc      = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=10&data=${encodeURIComponent(checkInUrl)}&_=${tick}`;
 
   const copyLink = () => {
-    try { navigator.clipboard?.writeText(checkInUrl); toast({ title: 'Check-in link copied' }); } catch (e) {}
+    try {
+      navigator.clipboard?.writeText(checkInUrl);
+      toast({ title: 'Check-in link copied', duration: 2000 });
+    } catch {}
   };
 
   const enterFullscreen = async () => {
     setFullscreen(true);
-    try { await document.documentElement.requestFullscreen(); } catch (e) {}
+    try { await document.documentElement.requestFullscreen(); } catch {}
   };
   const exitFullscreen = async () => {
     setFullscreen(false);
-    try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (e) {}
+    try { if (document.fullscreenElement) await document.exitFullscreen(); } catch {}
   };
 
   useEffect(() => {
@@ -43,16 +47,22 @@ export default function CheckInQrPanel({ settings }) {
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  // Load today's open check-ins + subscribe to live check-in / check-out events.
+  // ── Initial load + Supabase realtime subscription ─────────────────────────
   useEffect(() => {
-    let unsub;
     const refresh = async () => {
       try {
         const att = await db.entities.Attendance.filter({ date: todayISO() }, '-timestamp', 500);
         const map = membersMapRef.current;
-        setInGym(att.filter((a) => isActiveCheckin(a)).map((a) => ({ att: a, member: map[a.member_id] })).filter((x) => x.member));
-      } catch (e) {}
+        setInGym(
+          att
+            .filter((a) => isActiveCheckin(a))
+            .map((a) => ({ att: a, member: map[a.member_id] }))
+            .filter((x) => x.member)
+        );
+      } catch {}
     };
+
+    // Initial data load
     (async () => {
       try {
         const [mems, att] = await Promise.all([
@@ -62,36 +72,73 @@ export default function CheckInQrPanel({ settings }) {
         const map = {};
         mems.forEach((m) => { map[m.id] = m; });
         membersMapRef.current = map;
-        setInGym(att.filter((a) => isActiveCheckin(a)).map((a) => ({ att: a, member: map[a.member_id] })).filter((x) => x.member));
-      } catch (e) {}
+        setInGym(
+          att
+            .filter((a) => isActiveCheckin(a))
+            .map((a) => ({ att: a, member: map[a.member_id] }))
+            .filter((x) => x.member)
+        );
+      } catch {}
     })();
 
-    // Safety net: re-fetch every 20s so a missed realtime event (checkout on
-    // another device) still removes the member from the "In Gym Now" list.
+    // Poll every 20 s as a safety net
     const poll = setInterval(refresh, 20000);
 
-    unsub = db.entities.Attendance.subscribe((event) => {
-      const e = event || {};
-      const map = membersMapRef.current;
-      if (e.type === 'create' && e.data && !e.data.checkout_timestamp) {
-        const member = map[e.data.member_id];
-        setInGym((prev) => [{ att: e.data, member }, ...prev.filter((x) => x.att.id !== e.data.id)]);
-        if (member) setBurst({ mode: 'in', name: member.full_name, time: formatDateTime(e.data.timestamp).split(',')[1]?.trim() });
-      } else if (e.type === 'update' && e.data && e.data.checkout_timestamp) {
-        setInGym((prev) => {
-          const found = prev.find((x) => x.att.id === e.data.id);
-          if (found?.member && e.data.check_out_method !== 'auto') {
-            const mins = sessionDuration({ ...found.att, checkout_timestamp: e.data.checkout_timestamp });
-            setBurst({ mode: 'out', name: found.member.full_name, time: formatDateTime(e.data.checkout_timestamp).split(',')[1]?.trim(), duration: formatDuration(mins) });
+    // Supabase realtime — listen for INSERT / UPDATE on attendance table
+    const channel = supabase
+      .channel('checkin-panel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        (payload) => {
+          const map = membersMapRef.current;
+          const row = payload.new || payload.old;
+          if (!row) return;
+
+          if (payload.eventType === 'INSERT' && !row.checkout_timestamp) {
+            const member = map[row.member_id];
+            setInGym((prev) => [
+              { att: row, member },
+              ...prev.filter((x) => x.att.id !== row.id),
+            ]);
+            if (member) {
+              setBurst({
+                mode: 'in',
+                name: member.full_name,
+                time: formatDateTime(row.timestamp).split(',')[1]?.trim(),
+              });
+            }
+          } else if (payload.eventType === 'UPDATE' && row.checkout_timestamp) {
+            setInGym((prev) => {
+              const found = prev.find((x) => x.att.id === row.id);
+              if (found?.member && row.check_out_method !== 'auto') {
+                const mins = sessionDuration({
+                  ...found.att,
+                  checkout_timestamp: row.checkout_timestamp,
+                });
+                setBurst({
+                  mode: 'out',
+                  name: found.member.full_name,
+                  time: formatDateTime(row.checkout_timestamp).split(',')[1]?.trim(),
+                  duration: formatDuration(mins),
+                });
+              }
+              return prev.filter((x) => x.att.id !== row.id);
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setInGym((prev) => prev.filter((x) => x.att.id !== (payload.old?.id)));
           }
-          return prev.filter((x) => x.att.id !== e.data.id);
-        });
-      } else if (e.type === 'delete') {
-        setInGym((prev) => prev.filter((x) => x.att.id !== e.data?.id));
-      }
-    });
-    return () => { unsub && unsub(); clearInterval(poll); };
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(poll);
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  // ── Sub-components ─────────────────────────────────────────────────────────
 
   const InGymList = ({ compact }) => (
     <div className={`flex flex-col ${compact ? '' : 'h-full min-h-0'}`}>
@@ -115,8 +162,12 @@ export default function CheckInQrPanel({ settings }) {
                 <p className="text-xs text-muted-foreground">{member?.member_id || '—'}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs font-medium text-muted-foreground">in {formatDateTime(att.timestamp).split(',')[1]?.trim()}</p>
-                <p className="text-[11px] text-emerald-600 dark:text-emerald-400">{formatDuration(sessionDuration(att))}</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  in {formatDateTime(att.timestamp).split(',')[1]?.trim()}
+                </p>
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                  {formatDuration(sessionDuration(att))}
+                </p>
               </div>
             </div>
           ))}
@@ -128,11 +179,20 @@ export default function CheckInQrPanel({ settings }) {
   const QrBlock = ({ big }) => (
     <div className="flex flex-col items-center gap-3 text-center">
       <div className={`overflow-hidden rounded-2xl border border-border/70 bg-white p-3 shadow-sm ${big ? '' : 'mx-auto'}`}>
-        <img src={qrSrc} alt="Member self check-in QR code" className={big ? 'h-[min(78vh,78vw)] w-[min(78vh,78vw)]' : 'h-56 w-56'} />
+        <img
+          src={qrSrc}
+          alt="Member self check-in QR code"
+          className={big ? 'h-[min(78vh,78vw)] w-[min(78vh,78vw)]' : 'h-56 w-56'}
+        />
       </div>
       <div>
         {settings?.logo && (
-          <Image src={settings.logo} alt="DOYEN THE GYM logo" fittingType="fill" className="mx-auto mb-2 h-10 w-10 rounded-full ring-1 ring-primary/30" />
+          <Image
+            src={settings.logo}
+            alt={`${gymName} logo`}
+            fittingType="fill"
+            className="mx-auto mb-2 h-10 w-10 rounded-full ring-1 ring-primary/30"
+          />
         )}
         <p className="font-heading text-base font-bold text-foreground">{gymName}</p>
         <p className="text-xs text-muted-foreground">Scan to check in / check out</p>
@@ -148,7 +208,10 @@ export default function CheckInQrPanel({ settings }) {
           <div className="mt-4 rounded-xl bg-accent/60 p-3 text-left">
             <p className="flex items-start gap-2 text-xs text-accent-foreground">
               <Smartphone className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>Display this at the entrance. Members scan it with their phone camera, enter their registered mobile number, and are checked in automatically. Live check-ins appear below.</span>
+              <span>
+                Display this at the entrance. Members scan it with their phone camera, enter their
+                registered mobile number, and are checked in automatically.
+              </span>
             </p>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -159,7 +222,7 @@ export default function CheckInQrPanel({ settings }) {
               <Copy className="mr-1.5 h-4 w-4" /> Copy link
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setTick((t) => t + 1)}>
-              <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh
+              <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh QR
             </Button>
           </div>
         </div>
@@ -169,16 +232,16 @@ export default function CheckInQrPanel({ settings }) {
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground">
-          The QR points to <span className="font-medium">{checkInUrl}</span>
+          QR points to <span className="font-medium">{checkInUrl}</span>
         </p>
       </div>
 
-      {/* Fullscreen: ONLY the QR + live member list. No sidebar, no menu. */}
+      {/* Fullscreen kiosk mode */}
       {fullscreen && createPortal(
         <div className="fixed inset-0 z-[100] flex flex-col bg-background">
           <div className="flex items-center justify-between gap-3 px-4 py-3 lg:px-8">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl grad-brand text-primary-foreground shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
                 <Dumbbell className="h-5 w-5" />
               </div>
               <div>
@@ -208,12 +271,11 @@ export default function CheckInQrPanel({ settings }) {
       <AnimatePresence>
         {burst && (
           <CheckInOutBurst
-            key={burst.mode + burst.time + Math.random()}
+            key={`${burst.mode}-${burst.time}-${Math.random()}`}
             mode={burst.mode}
             name={burst.name}
             time={burst.time}
             duration={burst.duration}
-            portal
             onDone={() => setBurst(null)}
           />
         )}
