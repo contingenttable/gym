@@ -10,9 +10,6 @@ export const AuthProvider = ({ children }) => {
   const [isLoadingPublicSettings]             = useState(false);
   const [authError, setAuthError]             = useState(null);
   const [authChecked, setAuthChecked]         = useState(false);
-
-  // Prevent the auth state listener from running before the initial
-  // getSession() check completes (avoids a double-render race).
   const initialCheckDone = useRef(false);
 
   const buildUserProfile = async (supabaseUser) => {
@@ -32,8 +29,6 @@ export const AuthProvider = ({ children }) => {
         ...(data || {}),
       };
     } catch {
-      // If the users table query fails (e.g. RLS not yet set up), fall back
-      // to basic info so the app still opens.
       return {
         id:        supabaseUser.id,
         email:     supabaseUser.email,
@@ -46,7 +41,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let mounted = true;
 
-    // 1. Check the existing session synchronously first.
+    // 1. Check existing session on mount
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -73,17 +68,16 @@ export const AuthProvider = ({ children }) => {
 
     init();
 
-    // 2. Listen for subsequent sign-in / sign-out / token-refresh events.
+    // 2. Listen for auth state changes (sign-in, sign-out, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
-
-        // Skip events that fire before the initial check is done —
-        // init() already handled the opening session.
         if (!initialCheckDone.current) return;
 
-        if (session?.user) {
-          // Keep the spinner up while we load the profile.
+        // TOKEN_REFRESHED just means the JWT was silently renewed — no UI change needed
+        if (event === 'TOKEN_REFRESHED') return;
+
+        if (event === 'SIGNED_IN' && session?.user) {
           setIsLoadingAuth(true);
           const profile = await buildUserProfile(session.user);
           if (!mounted) return;
@@ -93,7 +87,7 @@ export const AuthProvider = ({ children }) => {
           if (globalThis.db) globalThis.db.auth._cachedUser = profile;
           setIsLoadingAuth(false);
           setAuthChecked(true);
-        } else {
+        } else if (event === 'SIGNED_OUT' || (!session && event !== 'TOKEN_REFRESHED')) {
           setUser(null);
           setIsAuthenticated(false);
           if (globalThis.db) globalThis.db.auth._cachedUser = null;
@@ -116,9 +110,7 @@ export const AuthProvider = ({ children }) => {
     if (shouldRedirect) window.location.href = '/login';
   };
 
-  const navigateToLogin = () => {
-    window.location.href = '/login';
-  };
+  const navigateToLogin = () => { window.location.href = '/login'; };
 
   const checkUserAuth = async () => {
     setIsLoadingAuth(true);
@@ -142,17 +134,9 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={{
-      user,
-      isAuthenticated,
-      isLoadingAuth,
-      isLoadingPublicSettings,
-      authError,
-      authChecked,
-      appPublicSettings: null,
-      logout,
-      navigateToLogin,
-      checkUserAuth,
-      checkAppState: checkUserAuth,
+      user, isAuthenticated, isLoadingAuth, isLoadingPublicSettings,
+      authError, authChecked, appPublicSettings: null,
+      logout, navigateToLogin, checkUserAuth, checkAppState: checkUserAuth,
     }}>
       {children}
     </AuthContext.Provider>

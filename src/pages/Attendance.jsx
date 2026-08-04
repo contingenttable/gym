@@ -40,29 +40,34 @@ export default function Attendance() {
   const threshold = settings?.attendance_duplicate_threshold ?? 240;
 
   const loadAll = async () => {
-    const [m, ms, att] = await Promise.all([
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-      db.entities.Attendance.list('-created_date', 500),
-    ]);
-    setMembers(m);
-    setMemberships(ms);
-    setAttendance(att);
-    setLoading(false);
+    try {
+      const [m, ms, att] = await Promise.all([
+        db.entities.Member.list('-created_date', 1000),
+        db.entities.Membership.list('-created_date', 1000),
+        db.entities.Attendance.list('-created_date', 500),
+      ]);
+      setMembers(m);
+      setMemberships(ms);
+      setAttendance(att);
 
-    // Auto check-out any open check-in that has crossed the threshold.
-    const stale = att.filter((a) => checkOutDue(a, threshold));
-    if (stale.length) {
-      for (const a of stale) {
-        try {
-          await db.entities.Attendance.update(a.id, {
-            checkout_timestamp: autoCheckoutTime(a, threshold),
-            check_out_method: 'auto',
-          });
-        } catch (e) {}
+      // Auto check-out any open check-in that has crossed the threshold.
+      const stale = att.filter((a) => checkOutDue(a, threshold));
+      if (stale.length) {
+        for (const a of stale) {
+          try {
+            await db.entities.Attendance.update(a.id, {
+              checkout_timestamp: autoCheckoutTime(a, threshold),
+              check_out_method: 'auto',
+            });
+          } catch (e) {}
+        }
+        const fresh = await db.entities.Attendance.list('-created_date', 500);
+        setAttendance(fresh);
       }
-      const fresh = await db.entities.Attendance.list('-created_date', 500);
-      setAttendance(fresh);
+    } catch (e) {
+      console.error('Attendance loadAll failed:', e);
+    } finally {
+      setLoading(false);
     }
   };
   useEffect(() => { loadAll(); }, []);

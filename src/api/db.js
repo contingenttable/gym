@@ -47,6 +47,19 @@ function parseOrder(orderStr = '-created_date') {
 }
 
 /**
+ * Wraps a Supabase promise with a timeout so hung queries
+ * never freeze a page indefinitely.
+ */
+function withTimeout(promise, ms = 12000, label = '') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Query timed out after ${ms}ms${label ? ` (${label})` : ''}`)), ms)
+    ),
+  ]);
+}
+
+/**
  * Throw a consistent error from a Supabase response.
  */
 function assertOk({ error }, context = '') {
@@ -63,11 +76,10 @@ function makeEntityApi(tableName) {
      */
     async list(orderStr = '-created_date', limit = 1000) {
       const { column, ascending } = parseOrder(orderStr);
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .order(column, { ascending })
-        .limit(limit);
+      const { data, error } = await withTimeout(
+        supabase.from(tableName).select('*').order(column, { ascending }).limit(limit),
+        12000, `${tableName}.list`
+      );
       assertOk({ error }, `${tableName}.list`);
       return data ?? [];
     },
@@ -91,66 +103,49 @@ function makeEntityApi(tableName) {
         }
       }
 
-      const { data, error } = await query;
+      const { data, error } = await withTimeout(query, 12000, `${tableName}.filter`);
       assertOk({ error }, `${tableName}.filter`);
       return data ?? [];
     },
 
-    /**
-     * get(id) → row  (throws if not found)
-     */
     async get(id) {
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .eq('id', id)
-        .single();
+      const { data, error } = await withTimeout(
+        supabase.from(tableName).select('*').eq('id', id).single(),
+        12000, `${tableName}.get`
+      );
       assertOk({ error }, `${tableName}.get(${id})`);
       return data;
     },
 
-    /**
-     * create(payload) → created row
-     */
     async create(payload) {
-      // Strip undefined values
       const clean = Object.fromEntries(
         Object.entries(payload).filter(([, v]) => v !== undefined)
       );
-      const { data, error } = await supabase
-        .from(tableName)
-        .insert(clean)
-        .select()
-        .single();
+      const { data, error } = await withTimeout(
+        supabase.from(tableName).insert(clean).select().single(),
+        12000, `${tableName}.create`
+      );
       assertOk({ error }, `${tableName}.create`);
       return data;
     },
 
-    /**
-     * update(id, payload) → updated row
-     */
     async update(id, payload) {
       const clean = Object.fromEntries(
         Object.entries(payload).filter(([, v]) => v !== undefined)
       );
-      const { data, error } = await supabase
-        .from(tableName)
-        .update(clean)
-        .eq('id', id)
-        .select()
-        .single();
+      const { data, error } = await withTimeout(
+        supabase.from(tableName).update(clean).eq('id', id).select().single(),
+        12000, `${tableName}.update`
+      );
       assertOk({ error }, `${tableName}.update(${id})`);
       return data;
     },
 
-    /**
-     * delete(id) → void
-     */
     async delete(id) {
-      const { error } = await supabase
-        .from(tableName)
-        .delete()
-        .eq('id', id);
+      const { error } = await withTimeout(
+        supabase.from(tableName).delete().eq('id', id),
+        12000, `${tableName}.delete`
+      );
       assertOk({ error }, `${tableName}.delete(${id})`);
     },
   };

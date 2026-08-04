@@ -43,7 +43,7 @@ export default function Dashboard() {
         ]);
         setData({ members, memberships, payments, attendance });
       } catch (e) {
-        console.error(e);
+        console.error('Dashboard load failed:', e);
       } finally {
         setLoading(false);
       }
