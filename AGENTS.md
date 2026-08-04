@@ -1,37 +1,31 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
-
 # AGENTS.md
 
 ## Project Context
 
-This is a Base44 app repository. Treat it as user-owned application code, keep changes focused on the user's request, and preserve existing project conventions.
-
-Start with `README.md` for local setup, environment variables, and publish workflow.
-
-## Base44 References
-
-- CLI overview: https://docs.db.com/developers/references/cli/get-started/overview.md
-- Agent skills: https://docs.db.com/developers/backend/overview/skills.md
-
-If your agent supports Agent Skills, install or update Base44 skills before Base44-specific work:
-
-```bash
-npx skills add base44/skills
-```
+This is a gym management app. It uses React + Vite on the frontend and Supabase (Postgres + Auth + Storage) as the backend. Keep changes focused on the user's request and preserve existing project conventions.
 
 ## Key Files
 
 - `src/`: frontend application source.
-- `src/api/db.js`: Supabase db adapter (entity CRUD + auth shim).
-- `src/api/supabaseClient.js`: raw Supabase client.
-- `vite.config.js`: Vite config.
+- `src/api/db.js`: Supabase db adapter — mimics the `db.entities.X` / `db.auth` API used throughout the app.
+- `src/api/supabaseClient.js`: raw Supabase client (use via `db.js` unless you need direct access).
+- `src/lib/gym.js`: shared constants, utility functions, permissions.
+- `src/lib/AuthContext.jsx`: Supabase auth session context.
+- `vite.config.js`: Vite config with `@` alias pointing to `src/`.
+- `supabase/schema.sql`: full Postgres schema — run this in Supabase SQL Editor to set up the database.
 - `.env.local`: local-only environment values; never commit secrets.
+
+## Environment variables
+
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
+```
 
 ## Working Notes
 
-- Use `base44 dev` as the default local development command when you need the local Base44 backend. It can run the backend and frontend together.
-- When docs or code mention the frontend being started automatically, that usually means the Base44 project config includes `site.serveCommand`, for example `"serveCommand": "npm run dev"` in `base44/config.jsonc`.
-- Use `npm run dev` only for frontend-only work against the hosted Base44 backend.
-- Prefer the existing Base44 CLI workflow over adding new npm scripts for Base44-specific tasks.
-- Reuse the existing SDK client and Vite plugin patterns before adding new Base44 integration paths.
-- Run the relevant checks from `package.json` before finishing code changes.
+- `db` is set on `globalThis` in `src/main.jsx` before React renders — all pages use it as a global.
+- Auth pages (`Login`, `Register`, `ForgotPassword`, `ResetPassword`) use `@supabase/supabase-js` directly.
+- Run `npm run dev` for local frontend development.
+- Run `npm run build` to verify the build before committing.
+- Run `npm run lint` to check for lint errors.
