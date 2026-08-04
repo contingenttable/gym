@@ -1,12 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { getSettings, setRolePermissions } from '@/lib/gym';
 import { supabase } from '@/api/supabaseClient';
+import { cache } from '@/lib/dataCache';
 import { cn } from '@/lib/utils';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
-
-const SESSION_HEARTBEAT_MS = 10 * 60 * 1000; // 10 min
 
 export default function AppLayout() {
   const [settings, setSettings]       = useState(null);
@@ -14,10 +13,10 @@ export default function AppLayout() {
   const [collapsed, setCollapsed]     = useState(false);
   const [revealed, setRevealed]       = useState(false);
 
-  // Use a ref for navigate so the session effect never needs to re-run
-  const navigateRef = useRef(null);
-  const navigate    = useNavigate();
-  navigateRef.current = navigate;
+  const navigateRef     = useRef(null);
+  const reconnectingRef = useRef(false);  // prevent concurrent reconnects
+  const navigate        = useNavigate();
+  navigateRef.current   = navigate;
 
   // ── Load settings once ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -26,60 +25,79 @@ export default function AppLayout() {
       .catch(() => {});
   }, []);
 
-  // ── Session heartbeat ──────────────────────────────────────────────────────
-  // No navigate in deps — uses ref so this effect runs exactly ONCE.
-  // Does NOT call refreshSession() on visibility change — that was the
-  // cause of repeated SIGNED_IN events → repeated re-renders on tab switch.
-  useEffect(() => {
-    let lastRefresh = 0;
-    const MIN_REFRESH_GAP = 60 * 1000; // don't refresh more than once per minute
+  // ── Recovery function — called on tab focus & network reconnect ─────────────
+  // This is the core fix: after any absence (tab switch, sleep, network drop),
+  // we check if the session is still valid and if the DB is reachable.
+  // If not — we recover silently without showing a spinner.
+  const recover = useCallback(async () => {
+    if (reconnectingRef.current) return;  // already recovering
+    reconnectingRef.current = true;
 
-    const safeRefresh = async () => {
-      const now = Date.now();
-      // Debounce: skip if we refreshed very recently
-      if (now - lastRefresh < MIN_REFRESH_GAP) return;
-      lastRefresh = now;
+    try {
+      // 1. Check session — getSession() reads from localStorage, no network call
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-      try {
-        const { error } = await supabase.auth.refreshSession();
-        if (error) {
-          // Only redirect if it's a real auth error, not a network hiccup
-          if (error.status === 401 || error.message?.includes('invalid')) {
-            navigateRef.current?.('/login', { replace: true });
-          }
-        }
-      } catch {
-        // Network error — don't redirect
+      if (sessionError || !session) {
+        // No session — send to login
+        navigateRef.current?.('/login', { replace: true });
+        return;
       }
-    };
 
-    // Only refresh on visibility if the token is actually close to expiring.
-    // Check expiry first — avoids unnecessary refreshes on every tab switch.
-    const onVisibilityChange = async () => {
-      if (document.visibilityState !== 'visible') return;
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const expiresAt = session.expires_at * 1000; // convert to ms
-        const timeLeft  = expiresAt - Date.now();
-        // Only refresh if token expires within 5 minutes
-        if (timeLeft < 5 * 60 * 1000) {
-          await safeRefresh();
+      // 2. Check if token needs refresh (expires within 10 minutes)
+      const expiresAt = (session.expires_at || 0) * 1000;
+      const timeLeft  = expiresAt - Date.now();
+
+      if (timeLeft < 10 * 60 * 1000) {
+        try {
+          const { error } = await supabase.auth.refreshSession();
+          if (error) {
+            // Real auth failure — go to login
+            navigateRef.current?.('/login', { replace: true });
+            return;
+          }
+        } catch {
+          // Network error — token still valid, don't redirect
         }
-        // Otherwise Supabase's autoRefreshToken handles it silently
-      } catch {}
+      }
+
+      // 3. Invalidate stale cache so pages re-fetch fresh data silently
+      // (data older than 2 min is already auto-expired by dataCache.js)
+      // Force-invalidate attendance since it changes most frequently
+      cache.invalidate('attendance');
+
+    } finally {
+      reconnectingRef.current = false;
+    }
+  }, []);
+
+  // ── Visibility change — fires on tab switch ─────────────────────────────────
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') recover();
     };
 
-    document.addEventListener('visibilitychange', onVisibilityChange);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [recover]);
 
-    // Periodic heartbeat — much safer than on every tab switch
-    const heartbeat = setInterval(safeRefresh, SESSION_HEARTBEAT_MS);
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      clearInterval(heartbeat);
+  // ── Online event — fires when network reconnects ────────────────────────────
+  useEffect(() => {
+    const onOnline = () => {
+      console.log('[app] Network reconnected — recovering session');
+      recover();
     };
-  }, []); // ← empty deps — runs once, uses ref for navigate
+
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [recover]);
+
+  // ── Periodic heartbeat — every 10 min while active ─────────────────────────
+  useEffect(() => {
+    const heartbeat = setInterval(() => {
+      if (document.visibilityState === 'visible') recover();
+    }, 10 * 60 * 1000);
+    return () => clearInterval(heartbeat);
+  }, [recover]);
 
   return (
     <div className="relative min-h-screen bg-background">
