@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link, useOutletContext } from 'react-router-dom
 import {
   ArrowLeft, Edit, RefreshCw, IndianRupee, QrCode, Snowflake, Play, ArrowUpDown,
   CalendarCheck, Clock, Wallet, TrendingUp, History, User, AlertTriangle, Printer, Ban, CheckCircle2,
+  KeyRound, Eye, EyeOff, RotateCcw,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,7 @@ export default function MemberProfile() {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [renewOpen, setRenewOpen] = useState(false);
+  const [showPin, setShowPin] = useState(false);
   const [renewMode, setRenewMode] = useState('renew');
   const [payOpen, setPayOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
@@ -323,6 +325,9 @@ export default function MemberProfile() {
             {member.address && <Detail label="Address" value={member.address} full />}
             {member.notes && <Detail label="Notes" value={member.notes} full />}
           </div>
+
+          {/* ── Self check-in PIN ── */}
+          <PinCard member={member} onUpdated={(newPin) => setMember((m) => ({ ...m, checkin_pin: newPin }))} showPin={showPin} setShowPin={setShowPin} />
         </TabsContent>
 
         <TabsContent value="memberships" className="mt-4">
@@ -516,6 +521,89 @@ function FreezeForm({ onCancel, onSubmit }) {
         <Button variant="outline" onClick={onCancel}>Cancel</Button>
         <Button onClick={() => onSubmit(reason, expected)} disabled={!reason.trim()}>Confirm freeze</Button>
       </div>
+    </div>
+  );
+}
+
+// ── PIN card component ────────────────────────────────────────────────────────
+function PinCard({ member, onUpdated, showPin, setShowPin }) {
+  const { toast } = useToast();
+  const [editing, setEditing]   = useState(false);
+  const [newPin, setNewPin]     = useState('');
+  const [saving, setSaving]     = useState(false);
+
+  const generateRandom = () => {
+    const p = String(Math.floor(1000 + Math.random() * 9000));
+    setNewPin(p);
+  };
+
+  const save = async () => {
+    if (!/^\d{4}$/.test(newPin)) {
+      toast({ title: 'PIN must be exactly 4 digits', variant: 'destructive' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await db.entities.Member.update(member.id, { checkin_pin: newPin });
+      onUpdated(newPin);
+      toast({ title: 'Check-in PIN updated' });
+      setEditing(false);
+      setNewPin('');
+    } catch (e) {
+      toast({ title: 'Failed to update PIN', description: e.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card rounded-2xl p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <KeyRound className="h-4 w-4 text-primary" />
+        <h3 className="text-sm font-semibold text-foreground">Self Check-in PIN</h3>
+        <span className="ml-auto text-xs text-muted-foreground">Used at the self-service kiosk</span>
+      </div>
+
+      {!editing ? (
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 font-mono text-lg font-bold tracking-[0.4em] text-foreground">
+            {member.checkin_pin
+              ? (showPin ? member.checkin_pin : '••••')
+              : <span className="text-sm font-normal text-muted-foreground">Not set</span>}
+          </div>
+          {member.checkin_pin && (
+            <button onClick={() => setShowPin((s) => !s)}
+              className="rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-muted/60">
+              {showPin ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => { setNewPin(member.checkin_pin || ''); setEditing(true); }}>
+            {member.checkin_pin ? 'Change PIN' : 'Set PIN'}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={4}
+            value={newPin}
+            onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            placeholder="4 digits"
+            className="h-10 w-28 rounded-xl border border-input bg-transparent px-3 text-center font-mono text-lg font-bold tracking-[0.4em] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            autoFocus
+          />
+          <Button size="sm" variant="outline" onClick={generateRandom} title="Generate random PIN">
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving || newPin.length !== 4}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setNewPin(''); }}>
+            Cancel
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

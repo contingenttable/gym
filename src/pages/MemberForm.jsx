@@ -95,6 +95,7 @@ export default function MemberForm() {
           ...form,
           member_id: memberId,
           qr_token: generateQrToken(),
+          checkin_pin: String(Math.floor(1000 + Math.random() * 9000)),
         });
         await logAudit({ action: 'member.create', entity: 'Member', entity_id: created.id, new_value: { member_id: memberId, name: form.full_name }, reason: 'New registration' });
         toast({ title: 'Member registered', description: memberId });
