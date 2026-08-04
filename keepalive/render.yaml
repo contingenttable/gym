@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: supabase-keepalive
+    runtime: node
+    region: singapore          # closest to India — change to oregon/frankfurt if needed
+    plan: free
+    rootDir: keepalive
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: SUPABASE_URL
+        sync: false            # set manually in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false            # set manually in Render dashboard
+    healthCheckPath: /health

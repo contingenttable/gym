@@ -1,0 +1,13 @@
+{
+  "name": "supabase-keepalive",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Pings Supabase every 5 days to prevent free-tier project from pausing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.49.8"
+  }
+}
