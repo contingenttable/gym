@@ -24,19 +24,19 @@ import UsersPage from '@/pages/Users';
 import SettingsPage from '@/pages/Settings';
 import CheckIn from '@/pages/CheckIn';
 
-// Full-screen spinner shown while the auth session is being resolved.
-const AuthLoadingScreen = () => (
-  <div className="fixed inset-0 flex items-center justify-center bg-background">
-    <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
-  </div>
-);
-
 const AuthenticatedApp = () => {
-  const { isLoadingAuth } = useAuth();
+  const { isLoadingAuth, authChecked } = useAuth();
 
-  // Hold the full screen until we know whether the user is logged in.
-  // This prevents a flash of the login page on every hard-refresh.
-  if (isLoadingAuth) return <AuthLoadingScreen />;
+  // Only show the full-screen spinner on the very first page load,
+  // before we know if the user is logged in or not.
+  // After that (authChecked=true), never block the UI again.
+  if (!authChecked || isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-background">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <Routes>

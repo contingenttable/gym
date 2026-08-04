@@ -4,8 +4,11 @@ import { supabase } from '@/api/supabaseClient';
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser]               = useState(null);
+  const [user, setUser]                       = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Only true during the very first session check on mount.
+  // Never set back to true after that — prevents the full-screen spinner
+  // from re-appearing every time the user switches tabs.
   const [isLoadingAuth, setIsLoadingAuth]     = useState(true);
   const [isLoadingPublicSettings]             = useState(false);
   const [authError, setAuthError]             = useState(null);
@@ -20,7 +23,6 @@ export const AuthProvider = ({ children }) => {
         .select('*')
         .eq('id', supabaseUser.id)
         .maybeSingle();
-
       return {
         id:        supabaseUser.id,
         email:     supabaseUser.email,
@@ -41,12 +43,11 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let mounted = true;
 
-    // 1. Check existing session on mount
+    // ── 1. One-time session check on mount ───────────────────────────────────
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!mounted) return;
-
         if (session?.user) {
           const profile = await buildUserProfile(session.user);
           if (!mounted) return;
@@ -56,11 +57,10 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (e) {
         console.error('Auth init error', e);
-        if (mounted) setAuthError({ type: 'unknown', message: e.message });
       } finally {
         if (mounted) {
           initialCheckDone.current = true;
-          setIsLoadingAuth(false);
+          setIsLoadingAuth(false);   // ← only ever set false, never true again
           setAuthChecked(true);
         }
       }
@@ -68,31 +68,31 @@ export const AuthProvider = ({ children }) => {
 
     init();
 
-    // 2. Listen for auth state changes (sign-in, sign-out, token refresh)
+    // ── 2. Auth state listener ───────────────────────────────────────────────
+    // Important: we NEVER set isLoadingAuth=true here.
+    // State updates happen silently so the UI doesn't flash a spinner.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
+        // Ignore events that fire before init() completes
         if (!initialCheckDone.current) return;
-
-        // TOKEN_REFRESHED just means the JWT was silently renewed — no UI change needed
+        // Ignore silent token renewals — nothing visible needs to change
         if (event === 'TOKEN_REFRESHED') return;
+        // Ignore INITIAL_SESSION — already handled by getSession() in init()
+        if (event === 'INITIAL_SESSION') return;
 
         if (event === 'SIGNED_IN' && session?.user) {
-          setIsLoadingAuth(true);
+          // Silently update user profile — no spinner
           const profile = await buildUserProfile(session.user);
           if (!mounted) return;
           setUser(profile);
           setIsAuthenticated(true);
           setAuthError(null);
           if (globalThis.db) globalThis.db.auth._cachedUser = profile;
-          setIsLoadingAuth(false);
-          setAuthChecked(true);
-        } else if (event === 'SIGNED_OUT' || (!session && event !== 'TOKEN_REFRESHED')) {
+        } else if (event === 'SIGNED_OUT') {
           setUser(null);
           setIsAuthenticated(false);
           if (globalThis.db) globalThis.db.auth._cachedUser = null;
-          setIsLoadingAuth(false);
-          setAuthChecked(true);
         }
       }
     );
@@ -113,7 +113,7 @@ export const AuthProvider = ({ children }) => {
   const navigateToLogin = () => { window.location.href = '/login'; };
 
   const checkUserAuth = async () => {
-    setIsLoadingAuth(true);
+    // Used by ProtectedRoute — does NOT set isLoadingAuth to avoid spinner flash
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
@@ -127,7 +127,6 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {
       console.error('checkUserAuth error', e);
     } finally {
-      setIsLoadingAuth(false);
       setAuthChecked(true);
     }
   };
