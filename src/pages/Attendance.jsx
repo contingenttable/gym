@@ -1,6 +1,5 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
-
 import {
   Search, ScanLine, CalendarCheck, Users, Clock, TrendingUp, CheckCircle2, QrCode,
   LogOut, Timer,
@@ -8,7 +7,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import KpiCard from '@/components/gym/KpiCard';
 import MemberAvatar from '@/components/gym/MemberAvatar';
 import StatusBadge from '@/components/gym/StatusBadge';
@@ -28,18 +27,19 @@ export default function Attendance() {
   const { settings } = useOutletContext();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [members, setMembers] = useState([]);
+  const [members, setMembers]       = useState([]);
   const [memberships, setMemberships] = useState([]);
   const [attendance, setAttendance] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
-  const [present, setPresent] = useState(null); // { member, active, mode }
-  const [busy, setBusy] = useState(false);
-  const [burst, setBurst] = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [query, setQuery]           = useState('');
+  const [present, setPresent]       = useState(null);
+  const [busy, setBusy]             = useState(false);
+  const [burst, setBurst]           = useState(null);
 
   const threshold = settings?.attendance_duplicate_threshold ?? 240;
 
-  const loadAll = async () => {
+  // ── Initial load ───────────────────────────────────────────────────────────
+  const loadAll = async (silent = false) => {
     try {
       const [m, ms, att] = await Promise.all([
         db.entities.Member.list('-created_date', 1000),
@@ -50,7 +50,6 @@ export default function Attendance() {
       setMemberships(ms);
       setAttendance(att);
 
-      // Auto check-out any open check-in that has crossed the threshold.
       const stale = att.filter((a) => checkOutDue(a, threshold));
       if (stale.length) {
         for (const a of stale) {
@@ -59,7 +58,7 @@ export default function Attendance() {
               checkout_timestamp: autoCheckoutTime(a, threshold),
               check_out_method: 'auto',
             });
-          } catch (e) {}
+          } catch {}
         }
         const fresh = await db.entities.Attendance.list('-created_date', 500);
         setAttendance(fresh);
@@ -67,13 +66,17 @@ export default function Attendance() {
     } catch (e) {
       console.error('Attendance loadAll failed:', e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
   useEffect(() => { loadAll(); }, []);
 
+  // ── Derived lists ──────────────────────────────────────────────────────────
   const todayList = useMemo(
-    () => attendance.filter((a) => a.date === todayISO()).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)),
+    () => attendance
+      .filter((a) => a.date === todayISO())
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)),
     [attendance]
   );
 
@@ -96,32 +99,21 @@ export default function Attendance() {
     ).slice(0, 8);
   }, [members, query]);
 
-  // Resolve whether the member is currently in the gym; auto-checkout if overdue.
+  // ── Member lookup ──────────────────────────────────────────────────────────
   const presentMember = async (member) => {
     const active = await resolveActiveCheckin(member.id, threshold);
     setPresent({ member, active, mode: active ? 'out' : 'in' });
   };
 
   const handleScan = async (token) => {
-    // First try the in-memory list (fast path)
     let member = members.find((m) => m.qr_token === token);
-
-    // If not found in cache, re-fetch from DB in case the list is stale
-    // (e.g. member was added after this page loaded)
     if (!member) {
       try {
         const fresh = await db.entities.Member.filter({ qr_token: token });
         member = fresh?.[0] || null;
-        if (member) {
-          // Update local cache so subsequent lookups are fast
-          setMembers((prev) => {
-            const exists = prev.some((m) => m.id === member.id);
-            return exists ? prev : [member, ...prev];
-          });
-        }
-      } catch { /* ignore — fall through to not-found toast */ }
+        if (member) setMembers((prev) => prev.some((m) => m.id === member.id) ? prev : [member, ...prev]);
+      } catch {}
     }
-
     if (!member) {
       toast({ title: 'Member not found', description: 'This QR is not linked to a member.', variant: 'destructive' });
       return;
@@ -129,21 +121,36 @@ export default function Attendance() {
     presentMember(member);
   };
 
+  // ── Check-in (optimistic) ──────────────────────────────────────────────────
   const doCheckIn = async (member, method) => {
     setBusy(true);
     try {
-      // Record only uniques — never create a second open session for the same member.
       const active = await resolveActiveCheckin(member.id, threshold);
       if (active) {
-        toast({
-          title: 'Already checked in',
-          description: `${member.full_name} already has an active session — check them out instead.`,
-        });
+        toast({ title: 'Already checked in', description: `${member.full_name} already has an active session.` });
         setPresent({ member, active, mode: 'out' });
-        setBusy(false);
         return;
       }
+
       const now = new Date();
+      const optimisticRecord = {
+        id: `optimistic-${Date.now()}`,
+        member_id: member.id,
+        member_name: member.full_name,
+        timestamp: now.toISOString(),
+        date: now.toISOString().slice(0, 10),
+        method,
+        correction_status: 'none',
+        checkout_timestamp: null,
+      };
+
+      // ① Instant UI update
+      setAttendance((prev) => [optimisticRecord, ...prev]);
+      setPresent(null);
+      setQuery('');
+      setBurst({ mode: 'in', name: member.full_name, time: formatDateTime(now.toISOString()).split(',')[1]?.trim() });
+
+      // ② Write to DB in background
       const rec = await db.entities.Attendance.create({
         member_id: member.id,
         member_name: member.full_name,
@@ -152,42 +159,70 @@ export default function Attendance() {
         method,
         correction_status: 'none',
       });
+
+      // ③ Replace optimistic record with real one
+      setAttendance((prev) => prev.map((a) => a.id === optimisticRecord.id ? rec : a));
+
       await logAudit({ action: 'attendance.create', entity: 'Attendance', entity_id: rec.id, reason: `Check-in via ${method}` });
-      setBurst({ mode: 'in', name: member.full_name, time: formatDateTime(now.toISOString()).split(',')[1]?.trim() });
-      setPresent(null); setQuery('');
-      await loadAll();
     } catch (e) {
+      // Roll back optimistic update on error
+      setAttendance((prev) => prev.filter((a) => !a.id?.startsWith('optimistic-')));
       toast({ title: 'Check-in failed', description: e.message, variant: 'destructive' });
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
 
+  // ── Check-out (optimistic) ─────────────────────────────────────────────────
   const doCheckOut = async (member) => {
     setBusy(true);
     try {
       const now = new Date();
+
+      // ① Instant UI update — mark the open record as checked out
+      setAttendance((prev) => prev.map((a) => {
+        if (a.member_id === member.id && isActiveCheckin(a)) {
+          return { ...a, checkout_timestamp: now.toISOString(), check_out_method: 'manual' };
+        }
+        return a;
+      }));
+      setPresent(null);
+
+      // ② Write to DB
       const closed = await checkoutMember(member.id, 'manual', threshold);
       if (!closed) {
+        // Roll back if no session found
+        setAttendance((prev) => prev.map((a) => {
+          if (a.member_id === member.id && a.check_out_method === 'manual' && !closed) {
+            return { ...a, checkout_timestamp: null, check_out_method: null };
+          }
+          return a;
+        }));
         toast({ title: 'No active session', description: `${member.full_name} is not currently checked in.` });
-        setPresent(null);
-        setBusy(false);
         return;
       }
-      await logAudit({ action: 'attendance.update', entity: 'Attendance', entity_id: closed.id, reason: 'Manual check-out' });
+
       const mins = sessionDuration(closed);
       setBurst({
         mode: 'out', name: member.full_name,
         time: formatDateTime(now.toISOString()).split(',')[1]?.trim(),
         duration: formatDuration(mins),
       });
-      setPresent(null);
-      await loadAll();
+
+      // ③ Sync real data silently
+      setAttendance((prev) => prev.map((a) => a.member_id === closed.member_id && !a.checkout_timestamp ? closed : a));
+      await logAudit({ action: 'attendance.update', entity: 'Attendance', entity_id: closed.id, reason: 'Manual check-out' });
     } catch (e) {
       toast({ title: 'Check-out failed', description: e.message, variant: 'destructive' });
-    } finally { setBusy(false); }
+      loadAll(true); // resync on error
+    } finally {
+      setBusy(false);
+    }
   };
 
+  // ── Stats ──────────────────────────────────────────────────────────────────
   const uniqueToday = new Set(todayList.map((a) => a.member_id)).size;
-  const inGymNow = todayList.filter((a) => isActiveCheckin(a) && !checkOutDue(a, threshold)).length;
+  const inGymNow    = todayList.filter((a) => isActiveCheckin(a) && !checkOutDue(a, threshold)).length;
   const peakHour = useMemo(() => {
     const hours = {};
     todayList.forEach((a) => { const h = new Date(a.timestamp).getHours(); hours[h] = (hours[h] || 0) + 1; });
@@ -207,6 +242,7 @@ export default function Attendance() {
 
   return (
     <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
           <CalendarCheck className="h-5 w-5" />
@@ -217,105 +253,107 @@ export default function Attendance() {
         </div>
       </div>
 
+      {/* KPI cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard label="Today's Check-ins" value={uniqueToday} icon={CalendarCheck} tone="primary" />
-        <KpiCard label="In Gym Now" value={inGymNow} icon={Users} tone="info" />
-        <KpiCard label="Peak Time" value={peakHour} icon={TrendingUp} tone="accent" />
-        <KpiCard label="Latest" value={todayList[0] ? formatDateTime(todayList[0].timestamp).split(',')[1]?.trim() : '—'} icon={Clock} tone="warning" />
+        <KpiCard label="In Gym Now"        value={inGymNow}    icon={Users}         tone="info" />
+        <KpiCard label="Peak Time"         value={peakHour}    icon={TrendingUp}    tone="accent" />
+        <KpiCard label="Latest"            value={todayList[0] ? formatDateTime(todayList[0].timestamp).split(',')[1]?.trim() : '—'} icon={Clock} tone="warning" />
       </div>
 
+      {/* Check-in tabs */}
       <Tabs defaultValue="search" className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-3">
-          <TabsTrigger value="search"><Search className="mr-1.5 h-4 w-4" /> Search</TabsTrigger>
-          <TabsTrigger value="scan"><ScanLine className="mr-1.5 h-4 w-4" /> QR Scan</TabsTrigger>
-          <TabsTrigger value="self"><QrCode className="mr-1.5 h-4 w-4" /> Self Check-in</TabsTrigger>
+          <TabsTrigger value="search"><Search    className="mr-1.5 h-4 w-4" /> Search</TabsTrigger>
+          <TabsTrigger value="scan">  <ScanLine  className="mr-1.5 h-4 w-4" /> QR Scan</TabsTrigger>
+          <TabsTrigger value="self">  <QrCode    className="mr-1.5 h-4 w-4" /> Self Check-in</TabsTrigger>
         </TabsList>
 
-        {/* Search check-in */}
         <TabsContent value="search" className="mt-4">
           <div className="glass-card rounded-2xl p-5">
-            {present ? (
-              <PresentCard
-                present={present}
-                membership={latestByMember[present.member.id]}
-                settings={settings}
-                busy={busy}
-                onCancel={() => setPresent(null)}
-                onCheckIn={() => doCheckIn(present.member, 'search')}
-                onCheckOut={() => doCheckOut(present.member, present.active)}
-              />
-            ) : (
-              <>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Type name, member ID or mobile…" className="pl-9 h-12 text-base" />
-                </div>
-                {query.trim().length >= 2 && (
-                  <div className="mt-3">
-                    {searchResults.length === 0 ? (
-                      <p className="py-4 text-center text-sm text-muted-foreground">No matches. <Link to="/members/new" className="text-primary hover:underline">Register new member</Link></p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {searchResults.map((m) => {
-                          const mem = latestByMember[m.id];
-                          const st = mem ? deriveStatus(mem, settings?.expiry_warning_days ?? 7) : 'expired';
-                          return (
-                            <li key={m.id}>
-                              <button onClick={() => presentMember(m)} className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-muted/60">
-                                <MemberAvatar member={m} size="sm" />
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-sm font-semibold text-foreground">{m.full_name}</p>
-                                  <p className="text-xs text-muted-foreground">{m.member_id} · {m.mobile}</p>
-                                </div>
-                                <StatusBadge status={st} />
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
+            <AnimatePresence mode="wait">
+              {present ? (
+                <motion.div key="present" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+                  <PresentCard present={present} membership={latestByMember[present.member.id]} settings={settings} busy={busy}
+                    onCancel={() => setPresent(null)}
+                    onCheckIn={() => doCheckIn(present.member, 'search')}
+                    onCheckOut={() => doCheckOut(present.member)} />
+                </motion.div>
+              ) : (
+                <motion.div key="search" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Type name, member ID or mobile…" className="pl-9 h-12 text-base" />
                   </div>
-                )}
-                {query.trim().length < 2 && (
-                  <p className="py-8 text-center text-sm text-muted-foreground">Start typing to find a member for check-in.</p>
-                )}
-              </>
-            )}
+                  {query.trim().length >= 2 ? (
+                    <div className="mt-3">
+                      {searchResults.length === 0 ? (
+                        <p className="py-4 text-center text-sm text-muted-foreground">
+                          No matches. <Link to="/members/new" className="text-primary hover:underline">Register new member</Link>
+                        </p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {searchResults.map((m) => {
+                            const mem = latestByMember[m.id];
+                            const st  = mem ? deriveStatus(mem, settings?.expiry_warning_days ?? 7) : 'expired';
+                            return (
+                              <li key={m.id}>
+                                <button onClick={() => presentMember(m)}
+                                  className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-muted/60">
+                                  <MemberAvatar member={m} size="sm" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-semibold text-foreground">{m.full_name}</p>
+                                    <p className="text-xs text-muted-foreground">{m.member_id} · {m.mobile}</p>
+                                  </div>
+                                  <StatusBadge status={st} />
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Start typing to find a member for check-in.</p>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </TabsContent>
 
-        {/* QR scan */}
         <TabsContent value="scan" className="mt-4">
           <div className="glass-card rounded-2xl p-5">
-            {present ? (
-              <PresentCard
-                present={present}
-                membership={latestByMember[present.member.id]}
-                settings={settings}
-                busy={busy}
-                onCancel={() => setPresent(null)}
-                onCheckIn={() => doCheckIn(present.member, 'qr')}
-                onCheckOut={() => doCheckOut(present.member, present.active)}
-              />
-            ) : (
-              <div className="mx-auto max-w-md space-y-3">
-                <p className="text-center text-sm text-muted-foreground">Point the camera at the member's QR card.</p>
-                <QrScanner onDetect={handleScan} />
-                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <QrCode className="h-4 w-4" /> The QR contains an opaque token — no personal data is exposed.
-                </div>
-              </div>
-            )}
+            <AnimatePresence mode="wait">
+              {present ? (
+                <motion.div key="present" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+                  <PresentCard present={present} membership={latestByMember[present.member.id]} settings={settings} busy={busy}
+                    onCancel={() => setPresent(null)}
+                    onCheckIn={() => doCheckIn(present.member, 'qr')}
+                    onCheckOut={() => doCheckOut(present.member)} />
+                </motion.div>
+              ) : (
+                <motion.div key="scanner" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                  <div className="mx-auto max-w-md space-y-3">
+                    <p className="text-center text-sm text-muted-foreground">Point the camera at the member's QR card.</p>
+                    <QrScanner onDetect={handleScan} />
+                    <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                      <QrCode className="h-4 w-4" /> The QR contains an opaque token — no personal data is exposed.
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </TabsContent>
 
-        {/* Self check-in QR */}
         <TabsContent value="self" className="mt-4">
           <CheckInQrPanel settings={settings} />
         </TabsContent>
       </Tabs>
 
-      {/* Today's sessions */}
+      {/* Today's sessions — animated list */}
       <div className="glass-card rounded-2xl p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-heading text-base font-bold text-foreground">
@@ -331,45 +369,84 @@ export default function Attendance() {
             {formatDate(todayISO())} · auto @ {threshold}m
           </div>
         </div>
+
         {todayList.length === 0 ? (
           <EmptyState icon={CalendarCheck} title="No check-ins today" description="Use search or QR scan above to check in your first member." />
         ) : (
           <div className="divide-y divide-border/60">
-            {todayList.map((a) => {
-              const member = members.find((m) => m.id === a.member_id);
-              const mem = member ? latestByMember[member.id] : null;
-              const open = isActiveCheckin(a);
-              const overdue = open && checkOutDue(a, threshold);
-              const outTime = a.checkout_timestamp ? formatDateTime(a.checkout_timestamp).split(',')[1]?.trim() : null;
-              const dur = sessionDuration(a);
-              return (
-                <div key={a.id} className="flex items-center gap-3 py-2.5">
-                  <MemberAvatar member={member} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <Link to={`/members/${a.member_id}`} className="truncate text-sm font-semibold text-foreground hover:underline">
-                      {a.member_name || member?.full_name || 'Unknown'}
-                    </Link>
-                    <p className="text-xs text-muted-foreground">
-                      {a.method === 'qr' ? 'QR' : 'Search'} · in {formatDateTime(a.timestamp).split(',')[1]?.trim()}{outTime ? ` · out ${outTime}${a.check_out_method === 'auto' ? ' (auto)' : ''}` : ''}
-                    </p>
-                  </div>
-                  {open ? (
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${overdue ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${overdue ? 'bg-amber-500' : 'animate-pulse bg-emerald-500'}`} /> {overdue ? 'auto out' : 'in gym'}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                      <Timer className="h-3 w-3" /> {formatDuration(dur)}
-                    </span>
-                  )}
-                  {mem && <StatusBadge status={deriveStatus(mem, settings?.expiry_warning_days ?? 7)} />}
-                </div>
-              );
-            })}
+            <AnimatePresence initial={false}>
+              {todayList.map((a) => {
+                const member   = members.find((m) => m.id === a.member_id);
+                const mem      = member ? latestByMember[member.id] : null;
+                const open     = isActiveCheckin(a);
+                const overdue  = open && checkOutDue(a, threshold);
+                const outTime  = a.checkout_timestamp ? formatDateTime(a.checkout_timestamp).split(',')[1]?.trim() : null;
+                const dur      = sessionDuration(a);
+                const isOptimistic = a.id?.startsWith('optimistic-');
+
+                return (
+                  <motion.div
+                    key={a.id}
+                    layout
+                    initial={{ opacity: 0, x: 24 }}
+                    animate={{ opacity: isOptimistic ? 0.7 : 1, x: 0 }}
+                    exit={{ opacity: 0, x: -24, height: 0, marginTop: 0, paddingTop: 0, paddingBottom: 0 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
+                    className="flex items-center gap-3 py-2.5 overflow-hidden"
+                  >
+                    <MemberAvatar member={member} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <Link to={`/members/${a.member_id}`} className="truncate text-sm font-semibold text-foreground hover:underline">
+                        {a.member_name || member?.full_name || 'Unknown'}
+                      </Link>
+                      <p className="text-xs text-muted-foreground">
+                        {a.method === 'qr' ? 'QR' : 'Search'} · in {formatDateTime(a.timestamp).split(',')[1]?.trim()}
+                        {outTime ? ` · out ${outTime}${a.check_out_method === 'auto' ? ' (auto)' : ''}` : ''}
+                      </p>
+                    </div>
+
+                    {/* Status badge — animates when it changes */}
+                    <AnimatePresence mode="wait">
+                      {open ? (
+                        <motion.span
+                          key="in"
+                          initial={{ scale: 0.8, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ scale: 0.8, opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                            overdue
+                              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                          }`}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${overdue ? 'bg-amber-500' : 'animate-pulse bg-emerald-500'}`} />
+                          {overdue ? 'auto out' : 'in gym'}
+                        </motion.span>
+                      ) : (
+                        <motion.span
+                          key="out"
+                          initial={{ scale: 0.8, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ scale: 0.8, opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                        >
+                          <Timer className="h-3 w-3" /> {formatDuration(dur)}
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
+
+                    {mem && <StatusBadge status={deriveStatus(mem, settings?.expiry_warning_days ?? 7)} />}
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </div>
         )}
       </div>
 
+      {/* Check-in / out burst overlay */}
       <AnimatePresence>
         {burst && (
           <CheckInOutBurst
@@ -386,15 +463,24 @@ export default function Attendance() {
   );
 }
 
+// ── PresentCard ────────────────────────────────────────────────────────────────
 function PresentCard({ present, membership, settings, busy, onCancel, onCheckIn, onCheckOut }) {
   const { member, active, mode } = present;
   const status = membership ? deriveStatus(membership, settings?.expiry_warning_days ?? 7) : 'expired';
-  const isOut = mode === 'out';
+  const isOut  = mode === 'out';
+
   return (
     <div className="flex flex-col items-center gap-3 py-2 text-center">
-      <div className={`flex h-16 w-16 items-center justify-center rounded-full ${isOut ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'}`}>
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+        className={`flex h-16 w-16 items-center justify-center rounded-full ${
+          isOut ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+        }`}
+      >
         {isOut ? <LogOut className="h-8 w-8" /> : <CheckCircle2 className="h-8 w-8" />}
-      </div>
+      </motion.div>
       <div>
         <p className="font-heading text-xl font-bold text-foreground">{member.full_name}</p>
         <p className="text-sm text-muted-foreground">{member.member_id} · {member.mobile}</p>
@@ -404,13 +490,19 @@ function PresentCard({ present, membership, settings, busy, onCancel, onCheckIn,
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> Currently in gym
           </span>
-          <p className="text-sm text-muted-foreground">Checked in at {formatDateTime(active.timestamp).split(',')[1]?.trim()} · {formatDuration(sessionDuration(active))} so far</p>
+          {active && (
+            <p className="text-sm text-muted-foreground">
+              Checked in at {formatDateTime(active.timestamp).split(',')[1]?.trim()} · {formatDuration(sessionDuration(active))} so far
+            </p>
+          )}
         </>
       ) : (
         <>
           <StatusBadge status={status} />
           {membership && (
-            <p className="text-sm text-muted-foreground">Valid until {formatDate(membership.end_date)} · {daysRemaining(membership.end_date)} days left</p>
+            <p className="text-sm text-muted-foreground">
+              Valid until {formatDate(membership.end_date)} · {daysRemaining(membership.end_date)} days left
+            </p>
           )}
           {(status === 'expired' || status === 'frozen') && (
             <p className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
