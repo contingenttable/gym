@@ -5,7 +5,7 @@
  * Previously many of these functions were injected at runtime by Base44.
  */
 
-import { db } from '@/api/db.js';
+// Note: async helpers use globalThis.db (set in main.jsx before React renders)
 
 // ── Membership status ────────────────────────────────────────────────────────
 

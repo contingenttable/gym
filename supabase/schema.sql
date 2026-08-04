@@ -84,9 +84,18 @@ create table if not exists public.members (
 
 alter table public.members enable row level security;
 
-create policy "members: authenticated all"
+-- Public read so the self check-in kiosk (unauthenticated) can look up members
+-- by mobile number or qr_token. Write operations still require authentication.
+create policy "members: public read"
+  on public.members for select
+  using (true);
+
+create policy "members: authenticated write"
   on public.members for all
   using (auth.role() = 'authenticated');
+
+-- Index for fast mobile lookups (used by the self check-in kiosk)
+create index if not exists members_mobile_idx on public.members(mobile);
 
 
 -- ── membership_plans ─────────────────────────────────────────────────────────
@@ -126,7 +135,12 @@ create table if not exists public.memberships (
 
 alter table public.memberships enable row level security;
 
-create policy "memberships: authenticated all"
+-- Public read so the self check-in kiosk can read membership status
+create policy "memberships: public read"
+  on public.memberships for select
+  using (true);
+
+create policy "memberships: authenticated write"
   on public.memberships for all
   using (auth.role() = 'authenticated');
 

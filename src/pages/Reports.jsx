@@ -32,6 +32,7 @@ export default function Reports() {
   const [mode, setMode] = useState('all');
   const [data, setData] = useState({ members: [], memberships: [], payments: [], attendance: [] });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -43,8 +44,11 @@ export default function Reports() {
           db.entities.Attendance.list('-created_date', 500),
         ]);
         setData({ members, memberships, payments, attendance });
-      } catch (e) {}
-      finally { setLoading(false); }
+      } catch (e) {
+        setLoadError(e?.message || 'Failed to load report data.');
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -146,6 +150,14 @@ export default function Reports() {
     return (
       <div className="flex h-64 items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <p className="text-sm text-destructive">{loadError}</p>
       </div>
     );
   }

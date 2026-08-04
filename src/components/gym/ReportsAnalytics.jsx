@@ -116,10 +116,8 @@ export default function ReportsAnalytics({ members, memberships, payments, atten
       {/* Cohort retention */}
       <RetentionChart memberships={memberships} />
 
-      {/* Attendance analytics */}
-      <div className="glass-card rounded-2xl p-5">
-        <AnalyticsPanel attendance={attendance} />
-      </div>
+      {/* Attendance analytics — AnalyticsPanel renders its own internal cards */}
+      <AnalyticsPanel attendance={attendance} />
     </div>
   );
 }

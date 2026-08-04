@@ -1,9 +1,8 @@
 import React, { useRef } from 'react';
-import { Printer, X } from 'lucide-react';
+import { Printer } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { useOutletContext } from 'react-router-dom';
 import MemberAvatar from './MemberAvatar';
 
 // QR is generated from the member's OPAQUE token only — no personal data is embedded.
@@ -11,14 +10,16 @@ function qrImageUrl(token) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(token)}`;
 }
 
-export default function MemberQrCard({ open, onOpenChange, member }) {
-  const { settings } = useOutletContext();
+// settings is passed as a prop (not via useOutletContext) so this component
+// can be safely used anywhere in the tree, not just inside AppLayout routes.
+export default function MemberQrCard({ open, onOpenChange, member, settings }) {
   const printRef = useRef(null);
 
   const handlePrint = () => {
     const node = printRef.current;
     if (!node) return;
     const w = window.open('', '_blank', 'width=400,height=600');
+    if (!w) return; // popup blocked — silently skip
     w.document.write(`
       <html><head><title>QR Card - ${member?.full_name || ''}</title>
       <style>
@@ -34,6 +35,8 @@ export default function MemberQrCard({ open, onOpenChange, member }) {
     setTimeout(() => { w.print(); }, 400);
   };
 
+  const gymName = settings?.gym_name || 'DOYEN THE GYM';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
@@ -41,7 +44,7 @@ export default function MemberQrCard({ open, onOpenChange, member }) {
           <DialogTitle>Member QR Card</DialogTitle>
         </DialogHeader>
         <div ref={printRef} className="overflow-hidden rounded-2xl bg-slate-900 p-6 text-center">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">{settings?.gym_name || 'FitCore Gym'}</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">{gymName}</p>
           <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">Membership Pass</p>
           <div className="mt-4 flex justify-center">
             {member?.qr_token ? (

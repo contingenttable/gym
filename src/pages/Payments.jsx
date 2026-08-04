@@ -12,7 +12,7 @@ import EmptyState from '@/components/gym/EmptyState';
 import MemberPickerDialog from '@/components/gym/MemberPickerDialog';
 import RecordPaymentDialog from '@/components/gym/RecordPaymentDialog';
 import {
-  formatCurrency, formatDate, PAYMENT_MODE_LABEL, todayISO, logAudit, computeBalance,
+  formatCurrency, formatDate, PAYMENT_MODE_LABEL, todayISO, logAudit, computeBalance, can,
 } from '@/lib/gym';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/lib/AuthContext';
@@ -114,6 +114,10 @@ export default function Payments() {
   const printReceipt = (p) => {
     const m = memberMap[p.member_id];
     const w = window.open('', '_blank', 'width=380,height=620');
+    if (!w) {
+      toast({ title: 'Popup blocked', description: 'Allow popups for this site to print receipts.', variant: 'destructive' });
+      return;
+    }
     w.document.write(`
       <html><head><title>Receipt ${p.receipt_number}</title><style>
         body{font-family:ui-sans-serif,system-ui,sans-serif;padding:24px;color:#0f172a}
@@ -121,7 +125,7 @@ export default function Payments() {
         .row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed #e2e8f0}
         .center{text-align:center;margin:12px 0}
       </style></head><body>
-        <div class="center"><h1>${settings?.gym_name || 'FitCore Gym'}</h1><div class="muted">${settings?.address || ''}</div></div>
+        <div class="center"><h1>${settings?.gym_name || 'DOYEN THE GYM'}</h1><div class="muted">${settings?.address || ''}</div></div>
         <div class="row"><span>Receipt</span><b>${p.receipt_number}</b></div>
         <div class="row"><span>Member</span><span>${m?.full_name || p.member_name}</span></div>
         <div class="row"><span>Member ID</span><span>${m?.member_id || ''}</span></div>
@@ -303,12 +307,3 @@ export default function Payments() {
   );
 }
 
-function can(user, perm) {
-  const role = user?.role || 'reception';
-  if (role === 'owner') return true;
-  const perms = {
-    admin: ['payment.view', 'payment.create', 'payment.correct'],
-    reception: ['payment.view', 'payment.create'],
-  }[role] || [];
-  return perms.includes(perm);
-}

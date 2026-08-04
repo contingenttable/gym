@@ -17,6 +17,26 @@ const ROLE_TONE = {
   reception: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
 };
 
+const STAT_TONE = {
+  primary: 'bg-primary/10 text-primary',
+  info: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+};
+
+function RoleStat({ icon: Icon, label, value, tone }) {
+  return (
+    <div className="glass-card flex items-center gap-3 rounded-2xl p-3.5">
+      <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${STAT_TONE[tone]}`}>
+        <Icon className="h-4 w-4" />
+      </div>
+      <div>
+        <p className="text-lg font-bold leading-none tnum text-foreground">{value}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const { settings, setSettings } = useOutletContext();
   const { user: me } = useAuth();
@@ -92,7 +112,10 @@ export default function UsersPage() {
   };
 
   const savePerms = async () => {
-    if (!settings?.id) return;
+    if (!settings?.id) {
+      toast({ title: 'Settings not loaded', description: 'Please wait a moment and try again.', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       const saved = await db.entities.Setting.update(settings.id, { ...settings, role_permissions: perms });
@@ -108,25 +131,6 @@ export default function UsersPage() {
   };
 
   const resetPerms = () => setPerms({ admin: [...ROLE_PERMISSIONS.admin], reception: [...ROLE_PERMISSIONS.reception] });
-
-const STAT_TONE = {
-  primary: 'bg-primary/10 text-primary',
-  info: 'bg-info/10 text-info',
-  warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-};
-function RoleStat({ icon: Icon, label, value, tone }) {
-  return (
-    <div className="glass-card flex items-center gap-3 rounded-2xl p-3.5">
-      <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${STAT_TONE[tone]}`}>
-        <Icon className="h-4 w-4" />
-      </div>
-      <div>
-        <p className="text-lg font-bold leading-none tnum text-foreground">{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
-      </div>
-    </div>
-  );
-}
 
   const counts = users.reduce((acc, u) => {
     const r = u.role || 'reception';

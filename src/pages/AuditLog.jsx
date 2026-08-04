@@ -4,19 +4,22 @@ import { ClipboardList, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import EmptyState from '@/components/gym/EmptyState';
 import { formatDateTime } from '@/lib/gym';
-import { useAuth } from '@/lib/AuthContext';
 
 export default function AuditLog() {
-  const { user } = useAuth();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
     (async () => {
-      try { setLogs(await db.entities.AuditLog.list('-created_date', 500)); }
-      catch (e) {}
-      finally { setLoading(false); }
+      try {
+        setLogs(await db.entities.AuditLog.list('-created_date', 500));
+      } catch (e) {
+        setLoadError(e?.message || 'Failed to load audit log.');
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -35,6 +38,14 @@ export default function AuditLog() {
     return (
       <div className="flex h-64 items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <p className="text-sm text-destructive">{loadError}</p>
       </div>
     );
   }

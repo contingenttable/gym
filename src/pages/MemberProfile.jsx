@@ -158,10 +158,11 @@ export default function MemberProfile() {
       const freezeEv = events.find((e) => e.type === 'freeze');
       let newEnd = currentMembership.end_date;
       if (freezeEv && freezeEv.start_date) {
-        const frozenDays = Math.max(0, daysRemaining(freezeEv.start_date) * -1);
-        // frozenDays approx = today - freezeStart
-        const fd = Math.round((Date.now() - new Date(freezeEv.start_date).getTime()) / (1000 * 60 * 60 * 24));
-        newEnd = addDays(currentMembership.end_date, Math.max(0, fd));
+        // Extend end_date by however many days the membership was frozen
+        const frozenDays = Math.round(
+          (Date.now() - new Date(freezeEv.start_date).getTime()) / (1000 * 60 * 60 * 24)
+        );
+        newEnd = addDays(currentMembership.end_date, Math.max(0, frozenDays));
       }
       await db.entities.Membership.update(currentMembership.id, { status: 'active', end_date: newEnd });
       await db.entities.MembershipEvent.create({
@@ -194,6 +195,10 @@ export default function MemberProfile() {
 
   const printReceipt = (p) => {
     const w = window.open('', '_blank', 'width=380,height=620');
+    if (!w) {
+      toast({ title: 'Popup blocked', description: 'Allow popups for this site to print receipts.', variant: 'destructive' });
+      return;
+    }
     w.document.write(`
       <html><head><title>Receipt ${p.receipt_number}</title><style>
         body{font-family:ui-sans-serif,system-ui,sans-serif;padding:24px;color:#0f172a}
@@ -202,7 +207,7 @@ export default function MemberProfile() {
         .total{font-weight:700;font-size:16px}
         .center{text-align:center;margin:12px 0}
       </style></head><body>
-        <div class="center"><h1>${settings?.gym_name || 'FitCore Gym'}</h1><div class="muted">${settings?.address || ''}</div></div>
+        <div class="center"><h1>${settings?.gym_name || 'DOYEN THE GYM'}</h1><div class="muted">${settings?.address || ''}</div></div>
         <div class="row"><span>Receipt</span><b>${p.receipt_number}</b></div>
         <div class="row"><span>Member</span><span>${member.full_name}</span></div>
         <div class="row"><span>Member ID</span><span>${member.member_id}</span></div>
@@ -438,7 +443,7 @@ export default function MemberProfile() {
       {/* Dialogs */}
       <RenewDialog open={renewOpen} onOpenChange={setRenewOpen} member={member} currentMembership={currentMembership} plans={plans} onSaved={loadAll} mode={renewMode} />
       <RecordPaymentDialog open={payOpen} onOpenChange={setPayOpen} member={member} memberships={memberships} existingPayments={payments} onSaved={loadAll} />
-      <MemberQrCard open={qrOpen} onOpenChange={setQrOpen} member={member} />
+      <MemberQrCard open={qrOpen} onOpenChange={setQrOpen} member={member} settings={settings} />
       <Dialog open={!!voidPayment} onOpenChange={(o) => { if (!o) { setVoidPayment(null); setVoidReason(''); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>

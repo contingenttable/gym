@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 
-import { Search, UserCheck } from 'lucide-react';
+import { Loader2, Search, UserCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -17,6 +17,7 @@ export default function MemberPickerDialog({ open, onOpenChange, onPick, title =
 
   useEffect(() => {
     if (!open) return;
+    setLoading(true);
     (async () => {
       try {
         const [m, ms] = await Promise.all([
@@ -26,6 +27,7 @@ export default function MemberPickerDialog({ open, onOpenChange, onPick, title =
         setMembers(m);
         setMemberships(ms);
       } catch (e) {}
+      finally { setLoading(false); }
     })();
   }, [open]);
 
@@ -57,7 +59,11 @@ export default function MemberPickerDialog({ open, onOpenChange, onPick, title =
           <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search members…" className="pl-9" />
         </div>
         <div className="max-h-80 overflow-y-auto scrollbar-thin">
-          {filtered.length === 0 ? (
+          {loading ? (
+            <div className="flex h-32 items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : filtered.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No members found.</p>
           ) : (
             <ul className="space-y-0.5">

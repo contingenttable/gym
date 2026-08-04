@@ -19,8 +19,10 @@ import { useAuth } from '@/lib/AuthContext';
 const EMPTY = { name: '', duration_days: 30, standard_fee: 0, description: '', active: true, notes: '' };
 
 export default function Plans() {
+  const { settings } = useOutletContext();
   const { toast } = useToast();
   const { user } = useAuth();
+  const symbol = settings?.currency_symbol || '₹';
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -134,7 +136,7 @@ export default function Plans() {
                 <Input type="number" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: Number(e.target.value) })} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Standard fee (₹)</Label>
+                <Label className="text-xs text-muted-foreground">Standard fee ({symbol})</Label>
                 <Input type="number" value={form.standard_fee} onChange={(e) => setForm({ ...form, standard_fee: Number(e.target.value) })} />
               </div>
             </div>

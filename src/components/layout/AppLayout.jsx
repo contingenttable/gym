@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 
 import { getSettings, setRolePermissions } from '@/lib/gym';
+import { supabase } from '@/api/supabaseClient';
 import { cn } from '@/lib/utils';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -9,12 +10,56 @@ import Topbar from './Topbar';
 export default function AppLayout() {
   const [settings, setSettings] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false); // desktop auto-hide mode
-  const [revealed, setRevealed] = useState(false);   // hover-revealed while collapsed
+  const [collapsed, setCollapsed] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    getSettings().then((s) => { setSettings(s); setRolePermissions(s?.role_permissions); }).catch(() => {});
+    getSettings()
+      .then((s) => { setSettings(s); setRolePermissions(s?.role_permissions); })
+      .catch(() => {});
   }, []);
+
+  // ── Session keep-alive & idle recovery ─────────────────────────────────────
+  useEffect(() => {
+    let sessionCheckTimer = null;
+
+    const refreshSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.refreshSession();
+        if (error || !data?.session) {
+          // Session is truly gone — redirect to login
+          navigate('/login', { replace: true });
+        }
+      } catch {
+        // Network error — don't redirect, user may just be offline briefly
+      }
+    };
+
+    // When the tab becomes visible again after being hidden (e.g. user switches
+    // back, wakes the screen, or returns from another app), refresh the session
+    // so the JWT is valid and any stale realtime channels reconnect.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshSession();
+      }
+    };
+
+    // Also check every 10 minutes while the tab is open, in case the token
+    // expires without a visibility event (e.g. tab left open overnight).
+    const startHeartbeat = () => {
+      clearInterval(sessionCheckTimer);
+      sessionCheckTimer = setInterval(refreshSession, 10 * 60 * 1000);
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    startHeartbeat();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearInterval(sessionCheckTimer);
+    };
+  }, [navigate]);
 
   return (
     <div className="relative min-h-screen bg-background">

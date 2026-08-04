@@ -75,7 +75,7 @@ export default function RenewDialog({
     }
     setSaving(true);
     try {
-      const membership = await globalThis.db.entities.Membership.create({
+      const membership = await db.entities.Membership.create({
         member_id:  member.id,
         plan_id:    selectedPlan?.id || '',
         plan_name:  useCustom ? 'Custom' : (selectedPlan?.name || 'Custom'),
@@ -87,7 +87,7 @@ export default function RenewDialog({
         notes:      '',
       });
 
-      await globalThis.db.entities.MembershipEvent.create({
+      await db.entities.MembershipEvent.create({
         membership_id: membership.id,
         member_id:     member.id,
         type:          isSwitch ? 'renewal' : 'renewal',
