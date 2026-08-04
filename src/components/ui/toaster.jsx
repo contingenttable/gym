@@ -9,9 +9,9 @@ import {
   ToastViewport,
 } from "@/components/ui/toast";
 
-// Default auto-dismiss after 30 seconds.
+// Default auto-dismiss after 15 seconds.
 // Individual toasts can override with a `duration` prop (ms).
-const DEFAULT_DURATION = 30000;
+const DEFAULT_DURATION = 15000;
 
 export function Toaster() {
   const { toasts, dismiss } = useToast();
