@@ -98,13 +98,14 @@ export default function CheckIn() {
       setError('Enter your 4-digit PIN.'); setStage('pin_error'); return;
     }
 
-    // If member has no PIN set yet, accept any input and set it now
+    // Member has no PIN set yet — can't verify, ask them to visit reception
     if (!member.checkin_pin) {
-      try {
-        await db.entities.Member.update(member.id, { checkin_pin: entered });
-        setMember((m) => ({ ...m, checkin_pin: entered }));
-      } catch {}
-    } else if (entered !== member.checkin_pin) {
+      setError('No PIN set for your account. Please ask reception to set your PIN from your member profile.');
+      setStage('pin_error');
+      return;
+    }
+
+    if (entered !== member.checkin_pin) {
       setError('Incorrect PIN. Please try again.');
       setStage('pin_error');
       setPin('');
@@ -280,11 +281,11 @@ export default function CheckIn() {
                   <div>
                     <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
                       <KeyRound className="h-4 w-4 text-primary" />
-                      {member?.checkin_pin ? 'Enter your 4-digit PIN' : 'Set a new 4-digit PIN'}
+                      Enter your 4-digit check-in PIN
                     </label>
                     {!member?.checkin_pin && (
-                      <p className="mb-2 text-xs text-muted-foreground">
-                        You haven't set a PIN yet. Enter any 4-digit number — it will be saved for future check-ins.
+                      <p className="mb-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                        No PIN set yet — please ask reception to set your PIN from your member profile.
                       </p>
                     )}
                     <div className="relative">

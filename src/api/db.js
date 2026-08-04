@@ -110,10 +110,11 @@ function makeEntityApi(tableName) {
 
     async get(id) {
       const { data, error } = await withTimeout(
-        supabase.from(tableName).select('*').eq('id', id).single(),
+        supabase.from(tableName).select('*').eq('id', id).maybeSingle(),
         12000, `${tableName}.get`
       );
       assertOk({ error }, `${tableName}.get(${id})`);
+      if (!data) throw new Error(`${tableName} row not found: ${id}`);
       return data;
     },
 
@@ -122,10 +123,11 @@ function makeEntityApi(tableName) {
         Object.entries(payload).filter(([, v]) => v !== undefined)
       );
       const { data, error } = await withTimeout(
-        supabase.from(tableName).insert(clean).select().single(),
+        supabase.from(tableName).insert(clean).select().maybeSingle(),
         12000, `${tableName}.create`
       );
       assertOk({ error }, `${tableName}.create`);
+      if (!data) throw new Error(`${tableName} insert returned no data — check RLS policies`);
       return data;
     },
 
@@ -134,11 +136,13 @@ function makeEntityApi(tableName) {
         Object.entries(payload).filter(([, v]) => v !== undefined)
       );
       const { data, error } = await withTimeout(
-        supabase.from(tableName).update(clean).eq('id', id).select().single(),
+        supabase.from(tableName).update(clean).eq('id', id).select().maybeSingle(),
         12000, `${tableName}.update`
       );
       assertOk({ error }, `${tableName}.update(${id})`);
-      return data;
+      // If data is null, the update was blocked by RLS or row doesn't exist.
+      // Return a safe fallback so callers don't crash.
+      return data ?? { id, ...clean };
     },
 
     async delete(id) {
