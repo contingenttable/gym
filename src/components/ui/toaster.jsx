@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Toast,
@@ -9,22 +9,39 @@ import {
   ToastViewport,
 } from "@/components/ui/toast";
 
-// Default auto-dismiss after 15 seconds.
-// Individual toasts can override with a `duration` prop (ms).
-const DEFAULT_DURATION = 15000;
+const DEFAULT_DURATION = 15000; // 15 seconds
 
 export function Toaster() {
   const { toasts, dismiss } = useToast();
+  const timersRef = useRef({});
 
-  // Auto-dismiss each toast after its duration
   useEffect(() => {
-    if (!toasts.length) return;
-    const timers = toasts.map((t) => {
-      const ms = t.duration ?? DEFAULT_DURATION;
-      return setTimeout(() => dismiss(t.id), ms);
+    // Start a timer for every toast that doesn't have one yet
+    toasts.forEach((t) => {
+      if (timersRef.current[t.id]) return; // already scheduled
+      const ms = typeof t.duration === 'number' ? t.duration : DEFAULT_DURATION;
+      timersRef.current[t.id] = setTimeout(() => {
+        dismiss(t.id);
+        delete timersRef.current[t.id];
+      }, ms);
     });
-    return () => timers.forEach(clearTimeout);
+
+    // Clear timers for toasts that have already been removed
+    const activeIds = new Set(toasts.map((t) => t.id));
+    Object.keys(timersRef.current).forEach((id) => {
+      if (!activeIds.has(id)) {
+        clearTimeout(timersRef.current[id]);
+        delete timersRef.current[id];
+      }
+    });
   }, [toasts, dismiss]);
+
+  // Clean up all timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(timersRef.current).forEach(clearTimeout);
+    };
+  }, []);
 
   return (
     <ToastProvider>

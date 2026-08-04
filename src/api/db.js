@@ -120,7 +120,7 @@ function makeEntityApi(tableName) {
 
     async create(payload) {
       const clean = Object.fromEntries(
-        Object.entries(payload).filter(([, v]) => v !== undefined)
+        Object.entries(payload).filter(([, v]) => v !== undefined && v !== '')
       );
       const { data, error } = await withTimeout(
         supabase.from(tableName).insert(clean).select().maybeSingle(),

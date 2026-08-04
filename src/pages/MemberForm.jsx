@@ -75,6 +75,20 @@ export default function MemberForm() {
     } catch (err) { toast({ title: 'Upload failed', variant: 'destructive' }); }
   };
 
+  // Convert empty strings to null for date/optional fields so Postgres doesn't choke
+  const sanitiseForm = (f) => ({
+    ...f,
+    dob:               f.dob               || null,
+    joining_date:      f.joining_date       || null,
+    alt_mobile:        f.alt_mobile         || null,
+    email:             f.email              || null,
+    gender:            f.gender             || null,
+    address:           f.address            || null,
+    emergency_contact: f.emergency_contact  || null,
+    notes:             f.notes              || null,
+    profile_photo:     f.profile_photo      || null,
+  });
+
   const submit = async (e) => {
     e.preventDefault();
     if (!form.full_name.trim() || !form.mobile.trim()) {
@@ -85,16 +99,16 @@ export default function MemberForm() {
     try {
       if (isEdit) {
         const original = await db.entities.Member.get(id);
-        await db.entities.Member.update(id, { ...form });
+        await db.entities.Member.update(id, sanitiseForm(form));
         await logAudit({ action: 'member.edit', entity: 'Member', entity_id: id, previous_value: original, new_value: form, reason: 'Profile edit' });
         toast({ title: 'Member updated' });
         navigate(`/members/${id}`);
       } else {
         const memberId = await nextMemberId(settings?.member_id_prefix || 'GYM');
         const created = await db.entities.Member.create({
-          ...form,
-          member_id: memberId,
-          qr_token: generateQrToken(),
+          ...sanitiseForm(form),
+          member_id:   memberId,
+          qr_token:    generateQrToken(),
           checkin_pin: String(Math.floor(1000 + Math.random() * 9000)),
         });
         await logAudit({ action: 'member.create', entity: 'Member', entity_id: created.id, new_value: { member_id: memberId, name: form.full_name }, reason: 'New registration' });
