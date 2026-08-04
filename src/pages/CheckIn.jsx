@@ -126,6 +126,14 @@ export default function CheckIn() {
   const confirmCheckIn = async () => {
     setStage('submitting');
     try {
+      // Re-check for an active session right before writing — guards against
+      // duplicate records if the member (or staff) triggers this twice.
+      const existing = await resolveActiveCheckin(member.id, threshold);
+      if (existing) {
+        setActive(existing);
+        setStage('checkout');
+        return;
+      }
       const now = new Date();
       await db.entities.Attendance.create({
         member_id:        member.id,

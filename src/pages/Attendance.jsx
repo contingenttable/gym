@@ -97,8 +97,26 @@ export default function Attendance() {
     setPresent({ member, active, mode: active ? 'out' : 'in' });
   };
 
-  const handleScan = (token) => {
-    const member = members.find((m) => m.qr_token === token);
+  const handleScan = async (token) => {
+    // First try the in-memory list (fast path)
+    let member = members.find((m) => m.qr_token === token);
+
+    // If not found in cache, re-fetch from DB in case the list is stale
+    // (e.g. member was added after this page loaded)
+    if (!member) {
+      try {
+        const fresh = await db.entities.Member.filter({ qr_token: token });
+        member = fresh?.[0] || null;
+        if (member) {
+          // Update local cache so subsequent lookups are fast
+          setMembers((prev) => {
+            const exists = prev.some((m) => m.id === member.id);
+            return exists ? prev : [member, ...prev];
+          });
+        }
+      } catch { /* ignore — fall through to not-found toast */ }
+    }
+
     if (!member) {
       toast({ title: 'Member not found', description: 'This QR is not linked to a member.', variant: 'destructive' });
       return;
