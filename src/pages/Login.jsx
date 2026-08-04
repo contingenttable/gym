@@ -8,11 +8,11 @@ import AuthLayout from '@/components/AuthLayout';
 import { supabase } from '@/api/supabaseClient';
 
 export default function Login() {
-  const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  const navigate  = useNavigate();
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
 
   const returnTo = new URLSearchParams(window.location.search).get('returnTo') || '/';
 
@@ -23,7 +23,9 @@ export default function Login() {
     try {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password });
       if (err) throw err;
-      window.location.href = returnTo;
+      // Use React Router navigate — keeps the SPA alive and lets AuthContext
+      // pick up the new session via onAuthStateChange before rendering.
+      navigate(returnTo, { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid email or password');
     } finally {
@@ -46,7 +48,9 @@ export default function Login() {
       }
     >
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>
+        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+          {error}
+        </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -57,7 +61,8 @@ export default function Login() {
             <Input
               id="email" type="email" autoComplete="email" autoFocus
               placeholder="you@example.com" value={email}
-              onChange={(e) => setEmail(e.target.value)} className="pl-10 h-12" required
+              onChange={(e) => setEmail(e.target.value)}
+              className="pl-10 h-12" required
             />
           </div>
         </div>
@@ -73,12 +78,15 @@ export default function Login() {
             <Input
               id="password" type="password" autoComplete="current-password"
               placeholder="••••••••" value={password}
-              onChange={(e) => setPassword(e.target.value)} className="pl-10 h-12" required
+              onChange={(e) => setPassword(e.target.value)}
+              className="pl-10 h-12" required
             />
           </div>
         </div>
         <Button type="submit" className="w-full h-12 font-medium" disabled={loading}>
-          {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Logging in…</> : 'Log in'}
+          {loading
+            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Logging in…</>
+            : 'Log in'}
         </Button>
       </form>
     </AuthLayout>

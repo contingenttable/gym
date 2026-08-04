@@ -24,28 +24,33 @@ import UsersPage from '@/pages/Users';
 import SettingsPage from '@/pages/Settings';
 import CheckIn from '@/pages/CheckIn';
 
-const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings } = useAuth();
+// Full-screen spinner shown while the auth session is being resolved.
+const AuthLoadingScreen = () => (
+  <div className="fixed inset-0 flex items-center justify-center bg-background">
+    <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+  </div>
+);
 
-  if (isLoadingPublicSettings || isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
-      </div>
-    );
-  }
+const AuthenticatedApp = () => {
+  const { isLoadingAuth } = useAuth();
+
+  // Hold the full screen until we know whether the user is logged in.
+  // This prevents a flash of the login page on every hard-refresh.
+  if (isLoadingAuth) return <AuthLoadingScreen />;
 
   return (
     <Routes>
+      {/* Public routes */}
       <Route path="/login"           element={<Login />} />
       <Route path="/register"        element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password"  element={<ResetPassword />} />
       <Route path="/check-in"        element={<CheckIn />} />
 
+      {/* Protected routes — redirect to /login if not authenticated */}
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppLayout />}>
-          <Route path="/"          element={<Dashboard />} />
+          <Route path="/"                 element={<Dashboard />} />
           <Route path="/members"          element={<Members />} />
           <Route path="/members/new"      element={<MemberForm />} />
           <Route path="/members/:id/edit" element={<MemberForm />} />
