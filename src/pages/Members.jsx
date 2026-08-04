@@ -7,6 +7,7 @@ import StatusBadge from '@/components/gym/StatusBadge';
 import EmptyState from '@/components/gym/EmptyState';
 import BulkRenewDialog from '@/components/gym/BulkRenewDialog';
 import WakingUp from '@/components/gym/WakingUp';
+import { cache } from '@/lib/dataCache';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { deriveStatus, formatDate, can, computeBalance } from '@/lib/gym';
@@ -27,23 +28,26 @@ export default function Members() {
   const { settings } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [members, setMembers] = useState([]);
-  const [memberships, setMemberships] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
+  const CACHE_KEY = 'members';
+  const [members, setMembers]       = useState(cache.get(CACHE_KEY)?.members || []);
+  const [memberships, setMemberships] = useState(cache.get(CACHE_KEY)?.memberships || []);
+  const [plans, setPlans]           = useState(cache.get(CACHE_KEY)?.plans || []);
+  const [payments, setPayments]     = useState(cache.get(CACHE_KEY)?.payments || []);
+  const [loading, setLoading]       = useState(!cache.get(CACHE_KEY));
+  const [query, setQuery]           = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const statusFilter = searchParams.get('status') || 'all';
   const setStatusFilter = (v) => {
     if (v === 'all') setSearchParams({}, { replace: true });
     else setSearchParams({ status: v }, { replace: true });
   };
-  const [plans, setPlans] = useState([]);
-  const [payments, setPayments] = useState([]);
   const [selected, setSelected] = useState({});
   const [bulkOpen, setBulkOpen] = useState(false);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const fetchData = async (silent = false) => {
+      if (!silent) setLoading(true);
       try {
         const [m, ms, pl, pays] = await Promise.all([
           db.entities.Member.list('-created_date', 1000),
@@ -51,16 +55,18 @@ export default function Members() {
           db.entities.MembershipPlan.list('-created_date', 200),
           db.entities.Payment.list('-created_date', 1000),
         ]);
-        setMembers(m);
-        setMemberships(ms);
-        setPlans(pl);
-        setPayments(pays);
+        if (cancelled) return;
+        cache.set(CACHE_KEY, { members: m, memberships: ms, plans: pl, payments: pays });
+        setMembers(m); setMemberships(ms); setPlans(pl); setPayments(pays);
       } catch (e) {
         console.error('Members load failed:', e);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    })();
+    };
+    const cached = cache.get(CACHE_KEY);
+    if (cached) { fetchData(true); } else { fetchData(false); }
+    return () => { cancelled = true; };
   }, []);
 
   const latestMembershipByMember = useMemo(() => {

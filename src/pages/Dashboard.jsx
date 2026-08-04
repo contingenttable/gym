@@ -19,6 +19,7 @@ import CalendarView from '@/components/gym/CalendarView';
 import TopMembersLeaderboard from '@/components/gym/TopMembersLeaderboard';
 import UpcomingBirthdays from '@/components/gym/UpcomingBirthdays';
 import WakingUp from '@/components/gym/WakingUp';
+import { cache } from '@/lib/dataCache';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   deriveStatus, formatCurrency, formatDate, formatDateTime, daysRemaining,
@@ -30,11 +31,15 @@ export default function Dashboard() {
   const { settings } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(!cache.get('dashboard')); // no spinner if cached
+  const [data, setData]       = useState(cache.get('dashboard'));
 
   useEffect(() => {
-    (async () => {
+    const CACHE_KEY = 'dashboard';
+    let cancelled   = false;
+
+    const fetchData = async (silent = false) => {
+      if (!silent) setLoading(true);
       try {
         const [members, memberships, payments, attendance] = await Promise.all([
           db.entities.Member.list('-created_date', 1000),
@@ -42,13 +47,28 @@ export default function Dashboard() {
           db.entities.Payment.list('-created_date', 500),
           db.entities.Attendance.list('-created_date', 500),
         ]);
-        setData({ members, memberships, payments, attendance });
+        if (cancelled) return;
+        const fresh = { members, memberships, payments, attendance };
+        cache.set(CACHE_KEY, fresh);
+        setData(fresh);
       } catch (e) {
         console.error('Dashboard load failed:', e);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    })();
+    };
+
+    const cached = cache.get(CACHE_KEY);
+    if (cached) {
+      // Show cached data immediately, refresh silently in background
+      setData(cached);
+      setLoading(false);
+      fetchData(true);
+    } else {
+      fetchData(false);
+    }
+
+    return () => { cancelled = true; };
   }, []);
 
   const stats = useMemo(() => {

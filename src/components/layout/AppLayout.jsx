@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { getSettings, setRolePermissions } from '@/lib/gym';
 import { supabase } from '@/api/supabaseClient';
@@ -6,71 +6,80 @@ import { cn } from '@/lib/utils';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
-// How often to ping the DB to prevent the free-tier project from pausing.
-// Supabase pauses after 7 days of inactivity — ping every 4 days is safe.
-const KEEPALIVE_INTERVAL_MS = 4 * 24 * 60 * 60 * 1000; // 4 days
-const SESSION_HEARTBEAT_MS  = 10 * 60 * 1000;           // 10 minutes
+const SESSION_HEARTBEAT_MS = 10 * 60 * 1000; // 10 min
 
 export default function AppLayout() {
-  const [settings, setSettings]     = useState(null);
+  const [settings, setSettings]       = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed]   = useState(false);
-  const [revealed, setRevealed]     = useState(false);
-  const navigate = useNavigate();
+  const [collapsed, setCollapsed]     = useState(false);
+  const [revealed, setRevealed]       = useState(false);
 
-  // ── Load settings ──────────────────────────────────────────────────────────
+  // Use a ref for navigate so the session effect never needs to re-run
+  const navigateRef = useRef(null);
+  const navigate    = useNavigate();
+  navigateRef.current = navigate;
+
+  // ── Load settings once ─────────────────────────────────────────────────────
   useEffect(() => {
     getSettings()
       .then((s) => { setSettings(s); setRolePermissions(s?.role_permissions); })
       .catch(() => {});
   }, []);
 
-  // ── Session keep-alive ─────────────────────────────────────────────────────
-  // Also fires a lightweight DB ping to prevent the free-tier project from
-  // being paused (Supabase pauses after 7 days of no activity).
+  // ── Session heartbeat ──────────────────────────────────────────────────────
+  // No navigate in deps — uses ref so this effect runs exactly ONCE.
+  // Does NOT call refreshSession() on visibility change — that was the
+  // cause of repeated SIGNED_IN events → repeated re-renders on tab switch.
   useEffect(() => {
-    let heartbeatTimer = null;
-    let keepaliveTimer = null;
+    let lastRefresh = 0;
+    const MIN_REFRESH_GAP = 60 * 1000; // don't refresh more than once per minute
 
-    const refreshSession = async () => {
+    const safeRefresh = async () => {
+      const now = Date.now();
+      // Debounce: skip if we refreshed very recently
+      if (now - lastRefresh < MIN_REFRESH_GAP) return;
+      lastRefresh = now;
+
       try {
-        const { data, error } = await supabase.auth.refreshSession();
-        if (error || !data?.session) {
-          navigate('/login', { replace: true });
+        const { error } = await supabase.auth.refreshSession();
+        if (error) {
+          // Only redirect if it's a real auth error, not a network hiccup
+          if (error.status === 401 || error.message?.includes('invalid')) {
+            navigateRef.current?.('/login', { replace: true });
+          }
         }
       } catch {
-        // Network error — don't redirect, user may be briefly offline
+        // Network error — don't redirect
       }
     };
 
-    // Lightweight ping: SELECT 1 — keeps the DB connection warm and
-    // prevents the project from being paused on the free tier.
-    const pingDB = async () => {
+    // Only refresh on visibility if the token is actually close to expiring.
+    // Check expiry first — avoids unnecessary refreshes on every tab switch.
+    const onVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return;
       try {
-        await supabase.from('settings').select('id').limit(1);
-      } catch {
-        // Non-fatal — just a keepalive
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshSession();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const expiresAt = session.expires_at * 1000; // convert to ms
+        const timeLeft  = expiresAt - Date.now();
+        // Only refresh if token expires within 5 minutes
+        if (timeLeft < 5 * 60 * 1000) {
+          await safeRefresh();
+        }
+        // Otherwise Supabase's autoRefreshToken handles it silently
+      } catch {}
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    // Heartbeat: refresh JWT every 10 minutes while active
-    heartbeatTimer = setInterval(refreshSession, SESSION_HEARTBEAT_MS);
-
-    // Keepalive: ping DB every 4 days to prevent free-tier pause
-    keepaliveTimer = setInterval(pingDB, KEEPALIVE_INTERVAL_MS);
+    // Periodic heartbeat — much safer than on every tab switch
+    const heartbeat = setInterval(safeRefresh, SESSION_HEARTBEAT_MS);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      clearInterval(heartbeatTimer);
-      clearInterval(keepaliveTimer);
+      clearInterval(heartbeat);
     };
-  }, [navigate]);
+  }, []); // ← empty deps — runs once, uses ref for navigate
 
   return (
     <div className="relative min-h-screen bg-background">

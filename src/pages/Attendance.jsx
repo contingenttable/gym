@@ -16,6 +16,7 @@ import QrScanner from '@/components/gym/QrScanner';
 import CheckInQrPanel from '@/components/gym/CheckInQrPanel';
 import CheckInOutBurst from '@/components/gym/CheckInOutBurst';
 import WakingUp from '@/components/gym/WakingUp';
+import { cache } from '@/lib/dataCache';
 import {
   deriveStatus, formatDate, formatDateTime, daysRemaining, todayISO, logAudit,
   isActiveCheckin, checkOutDue, autoCheckoutTime, formatDuration, sessionDuration,
@@ -28,14 +29,15 @@ export default function Attendance() {
   const { settings } = useOutletContext();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [members, setMembers]       = useState([]);
-  const [memberships, setMemberships] = useState([]);
-  const [attendance, setAttendance] = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [query, setQuery]           = useState('');
-  const [present, setPresent]       = useState(null);
-  const [busy, setBusy]             = useState(false);
-  const [burst, setBurst]           = useState(null);
+  const CACHE_KEY = 'attendance';
+  const [members, setMembers]         = useState(cache.get(CACHE_KEY)?.members || []);
+  const [memberships, setMemberships] = useState(cache.get(CACHE_KEY)?.memberships || []);
+  const [attendance, setAttendance]   = useState(cache.get(CACHE_KEY)?.attendance || []);
+  const [loading, setLoading]         = useState(!cache.get(CACHE_KEY));
+  const [query, setQuery]             = useState('');
+  const [present, setPresent]         = useState(null);
+  const [busy, setBusy]               = useState(false);
+  const [burst, setBurst]             = useState(null);
 
   const threshold = settings?.attendance_duplicate_threshold ?? 240;
 
@@ -47,13 +49,13 @@ export default function Attendance() {
         db.entities.Membership.list('-created_date', 1000),
         db.entities.Attendance.list('-created_date', 500),
       ]);
+      cache.set(CACHE_KEY, { members: m, memberships: ms, attendance: att });
       setMembers(m);
       setMemberships(ms);
       setAttendance(att);
 
       const stale = att.filter((a) => checkOutDue(a, threshold));
       if (stale.length) {
-        // Run all auto-checkouts in parallel, not sequentially
         await Promise.all(stale.map((a) =>
           db.entities.Attendance.update(a.id, {
             checkout_timestamp: autoCheckoutTime(a, threshold),
@@ -62,6 +64,7 @@ export default function Attendance() {
         ));
         const fresh = await db.entities.Attendance.list('-created_date', 500);
         setAttendance(fresh);
+        cache.set(CACHE_KEY, { members: m, memberships: ms, attendance: fresh });
       }
     } catch (e) {
       console.error('Attendance loadAll failed:', e);
@@ -70,7 +73,14 @@ export default function Attendance() {
     }
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    const cached = cache.get(CACHE_KEY);
+    if (cached) {
+      loadAll(true); // silent background refresh
+    } else {
+      loadAll(false);
+    }
+  }, []);
 
   // ── Derived lists ──────────────────────────────────────────────────────────
   const todayList = useMemo(
