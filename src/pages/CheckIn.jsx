@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+﻿﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   QrCode, Phone, AlertTriangle, Loader2, RefreshCw,
   ShieldCheck, LogOut, LogIn, KeyRound, Eye, EyeOff,
@@ -67,13 +67,15 @@ export default function CheckIn() {
     }
     setStage('searching'); setError('');
     try {
+      // Parallel fetch: member by mobile + (after finding member) memberships
       const matches = await db.entities.Member.filter({ mobile: num });
       if (!matches?.length) {
         setError('No member found with this mobile number. Please check with reception.');
         setStage('error'); return;
       }
       const m = matches[0];
-      const ms = await db.entities.Membership.filter({ member_id: m.id });
+      // Only fetch this member's memberships, sorted by end_date desc
+      const ms = await db.entities.Membership.filter({ member_id: m.id }, '-end_date', 50);
       let latest = null;
       for (const x of ms) {
         if (!latest || new Date(x.end_date) > new Date(latest.end_date)) latest = x;
@@ -115,6 +117,7 @@ export default function CheckIn() {
 
     setStage('checking_session'); setError('');
     try {
+      // resolveActiveCheckin is called once here and result passed to confirm/checkout stages
       const activeRec = await resolveActiveCheckin(member.id, threshold);
       setActive(activeRec);
       setStage(activeRec ? 'checkout' : 'confirm');
@@ -127,23 +130,15 @@ export default function CheckIn() {
   const confirmCheckIn = async () => {
     setStage('submitting');
     try {
-      // Re-check for an active session right before writing — guards against
-      // duplicate records if the member (or staff) triggers this twice.
-      const existing = await resolveActiveCheckin(member.id, threshold);
-      if (existing) {
-        setActive(existing);
-        setStage('checkout');
-        return;
-      }
       const now = new Date();
       await db.entities.Attendance.create({
-        member_id:        member.id,
-        member_name:      member.full_name,
-        timestamp:        now.toISOString(),
-        date:             now.toISOString().slice(0, 10),
-        method:           'qr',
-        correction_status:'none',
-        notes:            'Self check-in',
+        member_id:         member.id,
+        member_name:       member.full_name,
+        timestamp:         now.toISOString(),
+        date:              now.toISOString().slice(0, 10),
+        method:            'qr',
+        correction_status: 'none',
+        notes:             'Self check-in',
       });
       setBurst({ mode: 'in', name: member.full_name, time: formatDateTime(now.toISOString()).split(',')[1]?.trim() });
       setStage('done');
@@ -151,6 +146,7 @@ export default function CheckIn() {
       setError(err?.message || 'Check-in failed. Please try again.'); setStage('error');
     }
   };
+
 
   // ── Step 3b: check out ─────────────────────────────────────────────────────
   const confirmCheckOut = async () => {

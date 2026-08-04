@@ -52,14 +52,13 @@ export default function Attendance() {
 
       const stale = att.filter((a) => checkOutDue(a, threshold));
       if (stale.length) {
-        for (const a of stale) {
-          try {
-            await db.entities.Attendance.update(a.id, {
-              checkout_timestamp: autoCheckoutTime(a, threshold),
-              check_out_method: 'auto',
-            });
-          } catch {}
-        }
+        // Run all auto-checkouts in parallel, not sequentially
+        await Promise.all(stale.map((a) =>
+          db.entities.Attendance.update(a.id, {
+            checkout_timestamp: autoCheckoutTime(a, threshold),
+            check_out_method: 'auto',
+          }).catch(() => {})
+        ));
         const fresh = await db.entities.Attendance.list('-created_date', 500);
         setAttendance(fresh);
       }
@@ -88,6 +87,13 @@ export default function Attendance() {
     }
     return map;
   }, [memberships]);
+
+  // O(1) member lookup by id — replaces O(n) members.find() in render loop
+  const memberMap = useMemo(() => {
+    const map = {};
+    for (const m of members) map[m.id] = m;
+    return map;
+  }, [members]);
 
   const searchResults = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -395,7 +401,7 @@ export default function Attendance() {
           <div className="divide-y divide-border/60">
             <AnimatePresence initial={false}>
               {todayList.map((a) => {
-                const member   = members.find((m) => m.id === a.member_id);
+                const member   = memberMap[a.member_id];
                 const mem      = member ? latestByMember[member.id] : null;
                 const open     = isActiveCheckin(a);
                 const overdue  = open && checkOutDue(a, threshold);

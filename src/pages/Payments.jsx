@@ -1,5 +1,6 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
+import { printReceipt as printReceiptLib } from '@/lib/printReceipt';
 
 import { IndianRupee, Search, Plus, Printer, Ban, Wallet } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -62,15 +63,20 @@ export default function Payments() {
   const [voidReason, setVoidReason] = useState('');
 
   const load = async () => {
-    const [p, m, ms] = await Promise.all([
-      db.entities.Payment.list('-created_date', 500),
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-    ]);
-    setPayments(p);
-    setMembers(m);
-    setMemberships(ms);
-    setLoading(false);
+    try {
+      const [p, m, ms] = await Promise.all([
+        db.entities.Payment.list('-created_date', 500),
+        db.entities.Member.list('-created_date', 1000),
+        db.entities.Membership.list('-created_date', 1000),
+      ]);
+      setPayments(p);
+      setMembers(m);
+      setMemberships(ms);
+    } catch (e) {
+      console.error('Payments load failed:', e);
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -113,31 +119,9 @@ export default function Payments() {
 
   const printReceipt = (p) => {
     const m = memberMap[p.member_id];
-    const w = window.open('', '_blank', 'width=380,height=620');
-    if (!w) {
-      toast({ title: 'Popup blocked', description: 'Allow popups for this site to print receipts.', variant: 'destructive' });
-      return;
-    }
-    w.document.write(`
-      <html><head><title>Receipt ${p.receipt_number}</title><style>
-        body{font-family:ui-sans-serif,system-ui,sans-serif;padding:24px;color:#0f172a}
-        h1{font-size:18px;margin:0}.muted{color:#64748b;font-size:12px}
-        .row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed #e2e8f0}
-        .center{text-align:center;margin:12px 0}
-      </style></head><body>
-        <div class="center"><h1>${settings?.gym_name || 'DOYEN THE GYM'}</h1><div class="muted">${settings?.address || ''}</div></div>
-        <div class="row"><span>Receipt</span><b>${p.receipt_number}</b></div>
-        <div class="row"><span>Member</span><span>${m?.full_name || p.member_name}</span></div>
-        <div class="row"><span>Member ID</span><span>${m?.member_id || ''}</span></div>
-        <div class="row"><span>Date</span><span>${formatDate(p.payment_date)}</span></div>
-        <div class="row"><span>Mode</span><span>${PAYMENT_MODE_LABEL[p.mode]}</span></div>
-        ${p.reference_number ? `<div class="row"><span>Ref</span><span>${p.reference_number}</span></div>` : ''}
-        <div class="row" style="font-weight:700;font-size:16px"><span>Amount</span><span>${formatCurrency(p.amount, symbol)}</span></div>
-        <div class="center muted">Thank you!</div>
-      </body></html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 300);
+    printReceiptLib({ payment: p, member: m, settings, symbol });
   };
+
 
   const handleVoid = async () => {
     try {

@@ -54,8 +54,11 @@ export default function Members() {
         setMemberships(ms);
         setPlans(pl);
         setPayments(pays);
-      } catch (e) { console.error(e); }
-      finally { setLoading(false); }
+      } catch (e) {
+        console.error('Members load failed:', e);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 

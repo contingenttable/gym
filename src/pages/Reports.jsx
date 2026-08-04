@@ -246,7 +246,7 @@ export default function Reports() {
               </thead>
               <tbody className="divide-y divide-border/60">
                 {rows.slice(0, 200).map((r, i) => (
-                  <tr key={r.id || i} className="hover:bg-muted/40">
+                  <tr key={r.id ?? `row-${i}`} className="hover:bg-muted/40">
                     {columns.map((c) => (
                       <td key={c.label} className="px-4 py-2.5 whitespace-nowrap text-muted-foreground">
                         {typeof c.value === 'function' ? c.value(r) : (r[c.value] ?? '—')}

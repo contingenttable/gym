@@ -26,6 +26,7 @@ import {
   deriveStatus, formatDate, formatDateTime, formatCurrency, daysRemaining,
   computeBalance, todayISO, addDays, can, logAudit, PAYMENT_MODE_LABEL,
 } from '@/lib/gym';
+import { printReceipt } from '@/lib/printReceipt';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -67,24 +68,23 @@ export default function MemberProfile() {
   const [audit, setAudit] = useState([]);
 
   const loadAll = async () => {
+    // Fetch only data for this specific member — no full-table dumps
     const [m, ms, pays, att, pl, logs] = await Promise.all([
       db.entities.Member.get(id),
-      db.entities.Membership.list('-created_date', 200),
-      db.entities.Payment.list('-created_date', 500),
-      db.entities.Attendance.list('-created_date', 500),
+      db.entities.Membership.filter({ member_id: id }, '-start_date', 200),
+      db.entities.Payment.filter({ member_id: id }, '-payment_date', 500),
+      db.entities.Attendance.filter({ member_id: id }, '-timestamp', 500),
       db.entities.MembershipPlan.list('-created_date', 100),
-      db.entities.AuditLog.list('-created_date', 500),
+      db.entities.AuditLog.filter({ entity_id: id }, '-created_date', 200),
     ]);
     setMember(m);
-    const memberMs = ms.filter((x) => x.member_id === id).sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
-    const memberPays = pays.filter((x) => x.member_id === id).sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date));
+    const memberMs = [...ms].sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+    const memberPays = [...pays].sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date));
     setMemberships(memberMs);
     setPayments(memberPays);
-    setAttendance(att.filter((x) => x.member_id === id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
+    setAttendance([...att].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
     setPlans(pl);
-    const msIds = new Set(memberMs.map((x) => x.id));
-    const payIds = new Set(memberPays.map((x) => x.id));
-    setAudit(logs.filter((x) => x.entity_id === id || msIds.has(x.entity_id) || payIds.has(x.entity_id)));
+    setAudit(logs);
   };
 
   useEffect(() => {
@@ -193,33 +193,8 @@ export default function MemberProfile() {
     } catch (e) { toast({ title: 'Failed', description: e.message, variant: 'destructive' }); }
   };
 
-  const printReceipt = (p) => {
-    const w = window.open('', '_blank', 'width=380,height=620');
-    if (!w) {
-      toast({ title: 'Popup blocked', description: 'Allow popups for this site to print receipts.', variant: 'destructive' });
-      return;
-    }
-    w.document.write(`
-      <html><head><title>Receipt ${p.receipt_number}</title><style>
-        body{font-family:ui-sans-serif,system-ui,sans-serif;padding:24px;color:#0f172a}
-        h1{font-size:18px;margin:0}.muted{color:#64748b;font-size:12px}
-        .row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed #e2e8f0}
-        .total{font-weight:700;font-size:16px}
-        .center{text-align:center;margin:12px 0}
-      </style></head><body>
-        <div class="center"><h1>${settings?.gym_name || 'DOYEN THE GYM'}</h1><div class="muted">${settings?.address || ''}</div></div>
-        <div class="row"><span>Receipt</span><b>${p.receipt_number}</b></div>
-        <div class="row"><span>Member</span><span>${member.full_name}</span></div>
-        <div class="row"><span>Member ID</span><span>${member.member_id}</span></div>
-        <div class="row"><span>Date</span><span>${formatDate(p.payment_date)}</span></div>
-        <div class="row"><span>Mode</span><span>${PAYMENT_MODE_LABEL[p.mode]}</span></div>
-        ${p.reference_number ? `<div class="row"><span>Ref</span><span>${p.reference_number}</span></div>` : ''}
-        <div class="row total"><span>Amount</span><span>${formatCurrency(p.amount, symbol)}</span></div>
-        <div class="row"><span>Balance</span><span>${formatCurrency(balance, symbol)}</span></div>
-        <div class="center muted">Thank you for your payment!</div>
-      </body></html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 300);
+  const handlePrintReceipt = (p) => {
+    printReceipt({ payment: p, member, settings, symbol, balance });
   };
 
   if (loading) {
@@ -401,7 +376,7 @@ export default function MemberProfile() {
                     <p className="text-xs text-muted-foreground">{p.receipt_number} · {PAYMENT_MODE_LABEL[p.mode]} · {formatDate(p.payment_date)}</p>
                   </div>
                   <div className="flex gap-1.5">
-                    <Button size="sm" variant="ghost" onClick={() => printReceipt(p)}><Printer className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => handlePrintReceipt(p)}><Printer className="h-4 w-4" /></Button>
                     {p.status !== 'voided' && can(user, 'payment.correct') && (
                       <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidPayment(p)}><Ban className="h-4 w-4" /></Button>
                     )}

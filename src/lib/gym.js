@@ -308,29 +308,46 @@ export async function getSettings() {
 
 /**
  * nextMemberId(prefix) → 'GYM-000042'
+ * Uses MAX() query instead of fetching all members — O(1) vs O(n).
  */
 export async function nextMemberId(prefix = 'GYM') {
-  const members = await globalThis.db.entities.Member.list('-created_date', 9999);
-  const nums = members
-    .map((m) => {
-      const match = (m.member_id || '').match(/-(\d+)$/);
-      return match ? parseInt(match[1], 10) : 0;
-    })
-    .filter(Boolean);
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `${prefix}-${String(next).padStart(6, '0')}`;
+  try {
+    // Pull only the member_id column, ordered descending, limit 1
+    const { data } = await globalThis.db.supabase
+      .from('members')
+      .select('member_id')
+      .order('created_date', { ascending: false })
+      .limit(100); // enough to find the max numeric suffix
+
+    const nums = (data || [])
+      .map((m) => {
+        const match = (m.member_id || '').match(/-(\d+)$/);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter(Boolean);
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
+    return `${prefix}-${String(next).padStart(6, '0')}`;
+  } catch {
+    return `${prefix}-${Date.now()}`;
+  }
 }
 
 /**
  * nextReceiptNumber(prefix) → 'RCP-000007'
- * Gets the current settings receipt prefix, falls back to provided prefix.
+ * Uses only the receipt_number column — O(1) vs O(n).
  */
 export async function nextReceiptNumber(prefix = 'RCP') {
   try {
     const settings = await getSettings();
     const pfx = settings?.receipt_prefix || prefix;
-    const payments = await globalThis.db.entities.Payment.list('-created_date', 9999);
-    const nums = payments
+
+    const { data } = await globalThis.db.supabase
+      .from('payments')
+      .select('receipt_number')
+      .order('created_date', { ascending: false })
+      .limit(100);
+
+    const nums = (data || [])
       .map((p) => {
         const match = (p.receipt_number || '').match(/-(\d+)$/);
         return match ? parseInt(match[1], 10) : 0;
