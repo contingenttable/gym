@@ -1,7 +1,6 @@
-﻿﻿﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { printReceipt as printReceiptLib } from '@/lib/printReceipt';
-import { cache, useFetch } from '@/lib/dataCache';
 
 import { IndianRupee, Search, Plus, Printer, Ban, Wallet } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -44,17 +43,43 @@ export default function Payments() {
   const { toast } = useToast();
   const { user } = useAuth();
   const symbol = settings?.currency_symbol || '₹';
-  const { data: pData, loading, refresh: reloadPayments } = useFetch('payments', async () => {
-    const [p, m, ms] = await Promise.all([
-      db.entities.Payment.list('-created_date', 500),
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-    ]);
-    return { payments: p, members: m, memberships: ms };
-  });
-  const payments    = pData?.payments    || [];
-  const members     = pData?.members     || [];
-  const memberships = pData?.memberships || [];
+  const [payments, setPayments] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [memberships, setMemberships] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [mode, setMode] = useState('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dateFilter = searchParams.get('date') || 'all';
+  const setDateFilter = (v) => {
+    const next = new URLSearchParams(searchParams);
+    if (v === 'all') next.delete('date');
+    else next.set('date', v);
+    setSearchParams(next, { replace: true });
+  };
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [payMember, setPayMember] = useState(null);
+  const [payOpen, setPayOpen] = useState(false);
+  const [voidItem, setVoidItem] = useState(null);
+  const [voidReason, setVoidReason] = useState('');
+
+  const load = async () => {
+    try {
+      const [p, m, ms] = await Promise.all([
+        db.entities.Payment.list('-created_date', 500),
+        db.entities.Member.list('-created_date', 1000),
+        db.entities.Membership.list('-created_date', 1000),
+      ]);
+      setPayments(p);
+      setMembers(m);
+      setMemberships(ms);
+    } catch (e) {
+      console.error('Payments load failed:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
 
   const memberMap = useMemo(() => {
     const map = {};
@@ -109,10 +134,9 @@ export default function Payments() {
         reason: voidReason,
       });
       await logAudit({ action: 'payment.correct', entity: 'Payment', entity_id: voidItem.id, previous_value: { amount: voidItem.amount }, new_value: { status: 'voided' }, reason: voidReason });
-      cache.invalidate('payments');
       toast({ title: 'Payment voided' });
       setVoidItem(null); setVoidReason('');
-      reloadPayments();
+      load();
     } catch (e) { toast({ title: 'Failed', description: e.message, variant: 'destructive' }); }
   };
 

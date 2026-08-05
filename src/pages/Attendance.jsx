@@ -1,4 +1,4 @@
-﻿﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import {
   Search, ScanLine, CalendarCheck, Users, Clock, TrendingUp, CheckCircle2, QrCode,
@@ -16,7 +16,6 @@ import QrScanner from '@/components/gym/QrScanner';
 import CheckInQrPanel from '@/components/gym/CheckInQrPanel';
 import CheckInOutBurst from '@/components/gym/CheckInOutBurst';
 import WakingUp from '@/components/gym/WakingUp';
-import { cache, useFetch } from '@/lib/dataCache';
 import {
   deriveStatus, formatDate, formatDateTime, daysRemaining, todayISO, logAudit,
   isActiveCheckin, checkOutDue, autoCheckoutTime, formatDuration, sessionDuration,
@@ -29,24 +28,49 @@ export default function Attendance() {
   const { settings } = useOutletContext();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { data: attData, loading } = useFetch('attendance', async () => {
-    const [m, ms, att] = await Promise.all([
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-      db.entities.Attendance.list('-created_date', 500),
-    ]);
-    return { members: m, memberships: ms, attendance: att };
-  });
-  const members     = attData?.members     || [];
-  const memberships = attData?.memberships || [];
-  // attendance needs local state so optimistic check-in/out updates work
-  const [attendance, setAttendance] = React.useState(attData?.attendance || []);
+  const [members, setMembers]       = useState([]);
+  const [memberships, setMemberships] = useState([]);
+  const [attendance, setAttendance] = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [query, setQuery]           = useState('');
+  const [present, setPresent]       = useState(null);
+  const [busy, setBusy]             = useState(false);
+  const [burst, setBurst]           = useState(null);
 
-  // Sync attendance state when fresh data arrives from useFetch
-  React.useEffect(() => {
-    if (attData?.attendance) setAttendance(attData.attendance);
-  }, [attData]);
+  const threshold = settings?.attendance_duplicate_threshold ?? 240;
 
+  // ── Initial load ───────────────────────────────────────────────────────────
+  const loadAll = async (silent = false) => {
+    try {
+      const [m, ms, att] = await Promise.all([
+        db.entities.Member.list('-created_date', 1000),
+        db.entities.Membership.list('-created_date', 1000),
+        db.entities.Attendance.list('-created_date', 500),
+      ]);
+      setMembers(m);
+      setMemberships(ms);
+      setAttendance(att);
+
+      const stale = att.filter((a) => checkOutDue(a, threshold));
+      if (stale.length) {
+        // Run all auto-checkouts in parallel, not sequentially
+        await Promise.all(stale.map((a) =>
+          db.entities.Attendance.update(a.id, {
+            checkout_timestamp: autoCheckoutTime(a, threshold),
+            check_out_method: 'auto',
+          }).catch(() => {})
+        ));
+        const fresh = await db.entities.Attendance.list('-created_date', 500);
+        setAttendance(fresh);
+      }
+    } catch (e) {
+      console.error('Attendance loadAll failed:', e);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadAll(); }, []);
 
   // ── Derived lists ──────────────────────────────────────────────────────────
   const todayList = useMemo(

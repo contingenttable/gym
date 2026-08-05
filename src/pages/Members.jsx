@@ -1,4 +1,4 @@
-﻿﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import { Search, UserPlus, Users, RefreshCw, X, ArrowRight } from 'lucide-react';
@@ -7,7 +7,6 @@ import StatusBadge from '@/components/gym/StatusBadge';
 import EmptyState from '@/components/gym/EmptyState';
 import BulkRenewDialog from '@/components/gym/BulkRenewDialog';
 import WakingUp from '@/components/gym/WakingUp';
-import { cache, useFetch } from '@/lib/dataCache';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { deriveStatus, formatDate, can, computeBalance } from '@/lib/gym';
@@ -28,19 +27,41 @@ export default function Members() {
   const { settings } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { data: membersData, loading } = useFetch('members', async () => {
-    const [m, ms, pl, pays] = await Promise.all([
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-      db.entities.MembershipPlan.list('-created_date', 200),
-      db.entities.Payment.list('-created_date', 1000),
-    ]);
-    return { members: m, memberships: ms, plans: pl, payments: pays };
-  });
-  const members     = membersData?.members     || [];
-  const memberships = membersData?.memberships || [];
-  const plans       = membersData?.plans       || [];
-  const payments    = membersData?.payments    || [];
+  const [members, setMembers] = useState([]);
+  const [memberships, setMemberships] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') || 'all';
+  const setStatusFilter = (v) => {
+    if (v === 'all') setSearchParams({}, { replace: true });
+    else setSearchParams({ status: v }, { replace: true });
+  };
+  const [plans, setPlans] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [m, ms, pl, pays] = await Promise.all([
+          db.entities.Member.list('-created_date', 1000),
+          db.entities.Membership.list('-created_date', 1000),
+          db.entities.MembershipPlan.list('-created_date', 200),
+          db.entities.Payment.list('-created_date', 1000),
+        ]);
+        setMembers(m);
+        setMemberships(ms);
+        setPlans(pl);
+        setPayments(pays);
+      } catch (e) {
+        console.error('Members load failed:', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const latestMembershipByMember = useMemo(() => {
     const map = {};

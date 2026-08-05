@@ -1,181 +1,185 @@
 /**
- * db.js — Supabase compatibility shim
+ * db.js  —  Supabase compatibility shim
  *
- * Tab-switch fix strategy:
- * When a tab is backgrounded, browser throttles JS + network.
- * Queued fetch requests resolve in bulk when tab returns, causing
- * "ghost" responses that confuse the Supabase client state.
+ * Exposes the same surface as the old Base44 `db` object so all existing
+ * page / component code works unchanged.
  *
- * Solution: replace the global AbortController only when tab becomes
- * visible AND we are NOT in a user-initiated fetch (checked via counter).
- * AbortErrors from tab-switch are silently swallowed so the page keeps
- * showing its last data rather than going blank.
+ * Timeout & retry strategy:
+ * - Supabase free tier projects pause after 7 days of inactivity.
+ *   The first request after a pause can take 10–30 s to wake the DB.
+ * - We use a 30 s timeout on the first attempt and retry once on timeout,
+ *   giving the DB a chance to wake up before surfacing an error.
  */
 
 import { supabase } from './supabaseClient';
 
+// ── Table name map ─────────────────────────────────────────────────────────────
 const TABLE_MAP = {
-  Member:            'members',
-  Membership:        'memberships',
-  MembershipPlan:    'membership_plans',
-  MembershipEvent:   'membership_events',
-  Payment:           'payments',
-  PaymentAdjustment: 'payment_adjustments',
-  Attendance:        'attendance',
-  AuditLog:          'audit_logs',
-  Setting:           'settings',
-  User:              'users',
+  Member:             'members',
+  Membership:         'memberships',
+  MembershipPlan:     'membership_plans',
+  MembershipEvent:    'membership_events',
+  Payment:            'payments',
+  PaymentAdjustment:  'payment_adjustments',
+  Attendance:         'attendance',
+  AuditLog:           'audit_logs',
+  Setting:            'settings',
+  User:               'users',
 };
-
-// ── Abort controller management ───────────────────────────────────────────────
-let currentController = new AbortController();
-let activeRequests = 0; // count of in-flight requests
-
-function getSignal() { return currentController.signal; }
-
-function abortAndReset() {
-  currentController.abort();
-  currentController = new AbortController();
-}
-
-// On tab focus: abort ghost requests only if nothing is actively running
-if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && activeRequests === 0) {
-      abortAndReset();
-    }
-  });
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function parseOrder(orderStr = '-created_date') {
   const desc = orderStr.startsWith('-');
-  return { column: desc ? orderStr.slice(1) : orderStr, ascending: !desc };
+  const col   = desc ? orderStr.slice(1) : orderStr;
+  return { column: col, ascending: !desc };
 }
 
 function assertOk({ error }, context = '') {
-  if (error) throw Object.assign(new Error(error.message || 'Supabase error'), { context });
+  if (error) throw Object.assign(new Error(error.message || 'Supabase error'), { context, supabaseError: error });
 }
 
+/**
+ * Race a promise against a timeout.
+ * Throws an error whose message starts with "Query timed out" on timeout.
+ */
 function withTimeout(promise, ms, label = '') {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms)
+      setTimeout(
+        () => reject(new Error(`Query timed out after ${ms}ms${label ? ` (${label})` : ''}`)),
+        ms
+      )
     ),
   ]);
 }
 
+/** Sleep for `ms` milliseconds */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * run — execute a query with abort signal, timeout, and retry on cold start.
- * AbortErrors are rethrown so callers can decide whether to ignore them.
+ * executeWithRetry
+ *
+ * Runs `fn` with a 30 s timeout on the first attempt.
+ * If the DB is waking up (free tier cold start) and the first attempt times out,
+ * waits 3 s then retries once with a fresh 25 s timeout.
+ *
+ * This means the worst case is ~58 s total before surfacing an error,
+ * which comfortably covers Supabase free-tier cold-start latency (~10–25 s).
  */
-async function run(buildQuery, label = '') {
-  activeRequests++;
-  try {
-    const attempt = (ms) => withTimeout(
-      buildQuery().abortSignal(getSignal()),
-      ms, label
-    );
+async function executeWithRetry(fn, label = '') {
+  const FIRST_TIMEOUT  = 30000; // 30 s — generous enough for a cold start
+  const RETRY_DELAY    = 3000;  // 3 s gap to let DB finish waking
+  const SECOND_TIMEOUT = 25000; // 25 s — DB should be warm by now
 
-    try {
-      return await attempt(30000);
-    } catch (err) {
-      if (err.name === 'AbortError') throw err; // propagate abort
-      const retryable = err.message?.startsWith('Timeout') ||
-                        err.message?.toLowerCase().includes('network') ||
-                        err.message?.toLowerCase().includes('fetch');
-      if (!retryable) throw err;
-      console.warn(`[db] Retrying ${label}...`);
-      await sleep(3000);
-      return await attempt(25000);
+  try {
+    return await withTimeout(fn(), FIRST_TIMEOUT, label);
+  } catch (firstErr) {
+    const isTimeout = firstErr.message?.startsWith('Query timed out');
+    const isNetworkError = firstErr.message?.toLowerCase().includes('network') ||
+                           firstErr.message?.toLowerCase().includes('fetch');
+
+    // Only retry on timeout / network errors — not on auth or data errors
+    if (isTimeout || isNetworkError) {
+      console.warn(`[db] First attempt timed out for "${label}", retrying after ${RETRY_DELAY}ms...`);
+      await sleep(RETRY_DELAY);
+      // Retry — if this also times out, the error propagates to the caller
+      return await withTimeout(fn(), SECOND_TIMEOUT, `${label} (retry)`);
     }
-  } finally {
-    activeRequests = Math.max(0, activeRequests - 1);
+
+    throw firstErr;
   }
 }
 
-// ── Entity API ─────────────────────────────────────────────────────────────────
+// ── Entity API factory ─────────────────────────────────────────────────────────
 
 function makeEntityApi(tableName) {
   return {
+
     async list(orderStr = '-created_date', limit = 1000) {
       const { column, ascending } = parseOrder(orderStr);
-      const { data, error } = await run(
-        () => supabase.from(tableName).select('*').order(column, { ascending }).limit(limit),
-        `${tableName}.list`
-      );
-      assertOk({ error }); return data ?? [];
+      return executeWithRetry(async () => {
+        const { data, error } = await supabase
+          .from(tableName).select('*').order(column, { ascending }).limit(limit);
+        assertOk({ error }, `${tableName}.list`);
+        return data ?? [];
+      }, `${tableName}.list`);
     },
 
     async filter(conditions = {}, orderStr = '-created_date', limit = 500) {
       const { column, ascending } = parseOrder(orderStr);
-      const { data, error } = await run(() => {
-        let q = supabase.from(tableName).select('*').order(column, { ascending }).limit(limit);
+      return executeWithRetry(async () => {
+        let query = supabase
+          .from(tableName).select('*').order(column, { ascending }).limit(limit);
         for (const [col, val] of Object.entries(conditions)) {
-          if (val !== undefined && val !== null) q = q.eq(col, val);
+          if (val !== undefined && val !== null) query = query.eq(col, val);
         }
-        return q;
+        const { data, error } = await query;
+        assertOk({ error }, `${tableName}.filter`);
+        return data ?? [];
       }, `${tableName}.filter`);
-      assertOk({ error }); return data ?? [];
     },
 
     async get(id) {
-      const { data, error } = await run(
-        () => supabase.from(tableName).select('*').eq('id', id).maybeSingle(),
-        `${tableName}.get`
-      );
-      assertOk({ error });
-      if (!data) throw new Error(`${tableName} not found: ${id}`);
-      return data;
+      return executeWithRetry(async () => {
+        const { data, error } = await supabase
+          .from(tableName).select('*').eq('id', id).maybeSingle();
+        assertOk({ error }, `${tableName}.get(${id})`);
+        if (!data) throw new Error(`${tableName} row not found: ${id}`);
+        return data;
+      }, `${tableName}.get`);
     },
 
     async create(payload) {
       const clean = Object.fromEntries(
         Object.entries(payload).filter(([, v]) => v !== undefined && v !== '')
       );
-      const { data, error } = await run(
-        () => supabase.from(tableName).insert(clean).select().maybeSingle(),
-        `${tableName}.create`
-      );
-      assertOk({ error });
-      if (!data) throw new Error(`${tableName} insert returned no data — check RLS`);
-      return data;
+      return executeWithRetry(async () => {
+        const { data, error } = await supabase
+          .from(tableName).insert(clean).select().maybeSingle();
+        assertOk({ error }, `${tableName}.create`);
+        if (!data) throw new Error(`${tableName} insert returned no data — check RLS policies`);
+        return data;
+      }, `${tableName}.create`);
     },
 
     async update(id, payload) {
       const clean = Object.fromEntries(
         Object.entries(payload).filter(([, v]) => v !== undefined)
       );
-      const { data, error } = await run(
-        () => supabase.from(tableName).update(clean).eq('id', id).select().maybeSingle(),
-        `${tableName}.update`
-      );
-      assertOk({ error });
-      return data ?? { id, ...clean };
+      return executeWithRetry(async () => {
+        const { data, error } = await supabase
+          .from(tableName).update(clean).eq('id', id).select().maybeSingle();
+        assertOk({ error }, `${tableName}.update(${id})`);
+        return data ?? { id, ...clean };
+      }, `${tableName}.update`);
     },
 
     async delete(id) {
-      const { error } = await run(
-        () => supabase.from(tableName).delete().eq('id', id),
-        `${tableName}.delete`
-      );
-      assertOk({ error });
+      return executeWithRetry(async () => {
+        const { error } = await supabase.from(tableName).delete().eq('id', id);
+        assertOk({ error }, `${tableName}.delete(${id})`);
+      }, `${tableName}.delete`);
     },
   };
 }
 
-// ── Auth ───────────────────────────────────────────────────────────────────────
+// ── Auth surface ───────────────────────────────────────────────────────────────
 
 async function me() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user) return null;
-  const { data } = await supabase.from('users').select('*').eq('id', session.user.id).maybeSingle();
+  const { data } = await supabase
+    .from('users').select('*').eq('id', session.user.id).maybeSingle();
   if (!data) return null;
-  return { id: data.id, email: session.user.email, full_name: data.full_name || '', role: data.role || 'reception', ...data };
+  return {
+    id:        data.id,
+    email:     session.user.email,
+    full_name: data.full_name || session.user.user_metadata?.full_name || '',
+    role:      data.role || 'reception',
+    ...data,
+  };
 }
 
 async function isAuthenticated() {
@@ -192,12 +196,15 @@ function redirectToLogin(returnUrl) {
   window.location.href = '/login' + (returnUrl ? `?returnTo=${encodeURIComponent(returnUrl)}` : '');
 }
 
+// ── File upload ────────────────────────────────────────────────────────────────
+
 async function uploadFile({ file }) {
-  const ext  = file.name.split('.').pop();
-  const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from('uploads').upload(path, file, { cacheControl: '3600', upsert: false });
+  const ext    = file.name.split('.').pop();
+  const path   = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const bucket = 'uploads';
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: '3600', upsert: false });
   if (error) throw new Error(error.message);
-  const { data } = supabase.storage.from('uploads').getPublicUrl(path);
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
   return { file_url: data.publicUrl };
 }
 
@@ -205,6 +212,8 @@ async function inviteUser(email, role) {
   const { error } = await supabase.auth.admin.inviteUserByEmail(email, { data: { role } });
   if (error) throw new Error(error.message);
 }
+
+// ── Assemble db object ─────────────────────────────────────────────────────────
 
 const entities = Object.fromEntries(
   Object.entries(TABLE_MAP).map(([name, table]) => [name, makeEntityApi(table)])
@@ -216,7 +225,6 @@ export const db = {
   integrations: { Core: { UploadFile: uploadFile } },
   users: { inviteUser },
   supabase,
-  _abortAndReset: abortAndReset,
 };
 
 export default db;

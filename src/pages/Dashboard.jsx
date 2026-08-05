@@ -1,4 +1,4 @@
-﻿﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useNavigate } from 'react-router-dom';
 
 import {
@@ -19,7 +19,6 @@ import CalendarView from '@/components/gym/CalendarView';
 import TopMembersLeaderboard from '@/components/gym/TopMembersLeaderboard';
 import UpcomingBirthdays from '@/components/gym/UpcomingBirthdays';
 import WakingUp from '@/components/gym/WakingUp';
-import { cache, useFetch } from '@/lib/dataCache';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   deriveStatus, formatCurrency, formatDate, formatDateTime, daysRemaining,
@@ -31,15 +30,26 @@ export default function Dashboard() {
   const { settings } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { data, loading } = useFetch('dashboard', async () => {
-    const [members, memberships, payments, attendance] = await Promise.all([
-      db.entities.Member.list('-created_date', 1000),
-      db.entities.Membership.list('-created_date', 1000),
-      db.entities.Payment.list('-created_date', 500),
-      db.entities.Attendance.list('-created_date', 500),
-    ]);
-    return { members, memberships, payments, attendance };
-  });
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [members, memberships, payments, attendance] = await Promise.all([
+          db.entities.Member.list('-created_date', 1000),
+          db.entities.Membership.list('-created_date', 1000),
+          db.entities.Payment.list('-created_date', 500),
+          db.entities.Attendance.list('-created_date', 500),
+        ]);
+        setData({ members, memberships, payments, attendance });
+      } catch (e) {
+        console.error('Dashboard load failed:', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const stats = useMemo(() => {
     if (!data) return null;

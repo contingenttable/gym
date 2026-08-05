@@ -49,68 +49,17 @@ export default function CheckInQrPanel({ settings }) {
 
   // ── Initial load + Supabase realtime subscription ─────────────────────────
   useEffect(() => {
-    let channelRef = null;
-    let pollRef    = null;
-    let mounted    = true;
-
     const refresh = async () => {
-      if (!mounted) return;
       try {
         const att = await db.entities.Attendance.filter({ date: todayISO() }, '-timestamp', 500);
-        if (!mounted) return;
         const map = membersMapRef.current;
         setInGym(
-          att.filter((a) => isActiveCheckin(a))
-             .map((a) => ({ att: a, member: map[a.member_id] }))
-             .filter((x) => x.member)
+          att
+            .filter((a) => isActiveCheckin(a))
+            .map((a) => ({ att: a, member: map[a.member_id] }))
+            .filter((x) => x.member)
         );
       } catch {}
-    };
-
-    const subscribe = () => {
-      // Remove existing channel before creating a new one
-      if (channelRef) {
-        supabase.removeChannel(channelRef);
-        channelRef = null;
-      }
-
-      channelRef = supabase
-        .channel(`checkin-panel-${Date.now()}`)  // unique name prevents stale channels
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'attendance' },
-          (payload) => {
-            if (!mounted) return;
-            const map = membersMapRef.current;
-            const row = payload.new || payload.old;
-            if (!row) return;
-
-            if (payload.eventType === 'INSERT' && !row.checkout_timestamp) {
-              const member = map[row.member_id];
-              setInGym((prev) => [{ att: row, member }, ...prev.filter((x) => x.att.id !== row.id)]);
-              if (member) {
-                setBurst({ mode: 'in', name: member.full_name, time: formatDateTime(row.timestamp).split(',')[1]?.trim() });
-              }
-            } else if (payload.eventType === 'UPDATE' && row.checkout_timestamp) {
-              setInGym((prev) => {
-                const found = prev.find((x) => x.att.id === row.id);
-                if (found?.member && row.check_out_method !== 'auto') {
-                  const mins = sessionDuration({ ...found.att, checkout_timestamp: row.checkout_timestamp });
-                  setBurst({ mode: 'out', name: found.member.full_name, time: formatDateTime(row.checkout_timestamp).split(',')[1]?.trim(), duration: formatDuration(mins) });
-                }
-                return prev.filter((x) => x.att.id !== row.id);
-              });
-            } else if (payload.eventType === 'DELETE') {
-              setInGym((prev) => prev.filter((x) => x.att.id !== payload.old?.id));
-            }
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            // Reconnect after 3s on channel error
-            setTimeout(() => { if (mounted) subscribe(); }, 3000);
-          }
-        });
     };
 
     // Initial data load
@@ -120,38 +69,72 @@ export default function CheckInQrPanel({ settings }) {
           db.entities.Member.list('-created_date', 1000),
           db.entities.Attendance.filter({ date: todayISO() }, '-timestamp', 500),
         ]);
-        if (!mounted) return;
         const map = {};
         mems.forEach((m) => { map[m.id] = m; });
         membersMapRef.current = map;
         setInGym(
-          att.filter((a) => isActiveCheckin(a))
-             .map((a) => ({ att: a, member: map[a.member_id] }))
-             .filter((x) => x.member)
+          att
+            .filter((a) => isActiveCheckin(a))
+            .map((a) => ({ att: a, member: map[a.member_id] }))
+            .filter((x) => x.member)
         );
       } catch {}
     })();
 
-    // Start realtime subscription
-    subscribe();
+    // Poll every 20 s as a safety net
+    const poll = setInterval(refresh, 20000);
 
-    // Poll every 20s as safety net (handles missed realtime events)
-    pollRef = setInterval(refresh, 20000);
+    // Supabase realtime — listen for INSERT / UPDATE on attendance table
+    const channel = supabase
+      .channel('checkin-panel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        (payload) => {
+          const map = membersMapRef.current;
+          const row = payload.new || payload.old;
+          if (!row) return;
 
-    // Resubscribe when tab becomes visible (realtime may have disconnected)
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && mounted) {
-        subscribe();
-        refresh();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisible);
+          if (payload.eventType === 'INSERT' && !row.checkout_timestamp) {
+            const member = map[row.member_id];
+            setInGym((prev) => [
+              { att: row, member },
+              ...prev.filter((x) => x.att.id !== row.id),
+            ]);
+            if (member) {
+              setBurst({
+                mode: 'in',
+                name: member.full_name,
+                time: formatDateTime(row.timestamp).split(',')[1]?.trim(),
+              });
+            }
+          } else if (payload.eventType === 'UPDATE' && row.checkout_timestamp) {
+            setInGym((prev) => {
+              const found = prev.find((x) => x.att.id === row.id);
+              if (found?.member && row.check_out_method !== 'auto') {
+                const mins = sessionDuration({
+                  ...found.att,
+                  checkout_timestamp: row.checkout_timestamp,
+                });
+                setBurst({
+                  mode: 'out',
+                  name: found.member.full_name,
+                  time: formatDateTime(row.checkout_timestamp).split(',')[1]?.trim(),
+                  duration: formatDuration(mins),
+                });
+              }
+              return prev.filter((x) => x.att.id !== row.id);
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setInGym((prev) => prev.filter((x) => x.att.id !== (payload.old?.id)));
+          }
+        }
+      )
+      .subscribe();
 
     return () => {
-      mounted = false;
-      clearInterval(pollRef);
-      document.removeEventListener('visibilitychange', onVisible);
-      if (channelRef) supabase.removeChannel(channelRef);
+      clearInterval(poll);
+      supabase.removeChannel(channel);
     };
   }, []);
 
