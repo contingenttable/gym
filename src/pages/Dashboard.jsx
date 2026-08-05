@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useNavigate } from 'react-router-dom';
 
 import {
@@ -19,7 +19,7 @@ import CalendarView from '@/components/gym/CalendarView';
 import TopMembersLeaderboard from '@/components/gym/TopMembersLeaderboard';
 import UpcomingBirthdays from '@/components/gym/UpcomingBirthdays';
 import WakingUp from '@/components/gym/WakingUp';
-import { cache } from '@/lib/dataCache';
+import { cache, useFetch } from '@/lib/dataCache';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   deriveStatus, formatCurrency, formatDate, formatDateTime, daysRemaining,
@@ -31,46 +31,15 @@ export default function Dashboard() {
   const { settings } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(!cache.get('dashboard')); // no spinner if cached
-  const [data, setData]       = useState(cache.get('dashboard'));
-
-  useEffect(() => {
-    const CACHE_KEY = 'dashboard';
-    let cancelled   = false;
-
-    const fetchData = async (silent = false) => {
-      if (!silent) setLoading(true);
-      try {
-        const [members, memberships, payments, attendance] = await Promise.all([
-          db.entities.Member.list('-created_date', 1000),
-          db.entities.Membership.list('-created_date', 1000),
-          db.entities.Payment.list('-created_date', 500),
-          db.entities.Attendance.list('-created_date', 500),
-        ]);
-        if (cancelled) return;
-        const fresh = { members, memberships, payments, attendance };
-        cache.set(CACHE_KEY, fresh);
-        setData(fresh);
-      } catch (e) {
-        if (e.name === 'AbortError') return; // tab switched — keep existing data
-        console.error('Dashboard load failed:', e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    const cached = cache.get(CACHE_KEY);
-    if (cached) {
-      // Show cached data immediately, refresh silently in background
-      setData(cached);
-      setLoading(false);
-      fetchData(true);
-    } else {
-      fetchData(false);
-    }
-
-    return () => { cancelled = true; };
-  }, []);
+  const { data, loading } = useFetch('dashboard', async () => {
+    const [members, memberships, payments, attendance] = await Promise.all([
+      db.entities.Member.list('-created_date', 1000),
+      db.entities.Membership.list('-created_date', 1000),
+      db.entities.Payment.list('-created_date', 500),
+      db.entities.Attendance.list('-created_date', 500),
+    ]);
+    return { members, memberships, payments, attendance };
+  });
 
   const stats = useMemo(() => {
     if (!data) return null;
